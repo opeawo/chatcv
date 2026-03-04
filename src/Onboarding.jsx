@@ -67,8 +67,18 @@ function StepDrop({ onNext }) {
     if (!file) return;
     setFileName(file.name);
     const reader = new FileReader();
-    reader.onload = (e) => { onNext({ rawText: e.target.result, source: "pdf" }); };
-    reader.readAsText(file);
+    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+      reader.onload = (e) => {
+        const bytes = new Uint8Array(e.target.result);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        onNext({ pdfBase64: btoa(binary), source: "pdf" });
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = (e) => { onNext({ rawText: e.target.result, source: "txt" }); };
+      reader.readAsText(file);
+    }
   };
 
   const handlePaste = async () => {
@@ -176,10 +186,7 @@ function StepExtract({ input, onNext }) {
         setPhase("reading");
         await new Promise(r => setTimeout(r, 600));
         setPhase("proposing");
-        const raw = await claude(
-          `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
-Return ONLY valid JSON, no markdown, no explanation.`,
-          `Extract a professional profile from this text. Return JSON with these exact keys:
+        const extractPrompt = `Extract a professional profile from this resume/CV. Return JSON with these exact keys:
 {
   "name": "full name",
   "title": "current job title",
@@ -187,12 +194,19 @@ Return ONLY valid JSON, no markdown, no explanation.`,
   "years": "years of experience as string",
   "summary": "2-3 sentence professional summary",
   "skills": ["skill1", "skill2", ...up to 8],
-  "highlights": ["achievement1", "achievement2", ...up to 4]
-}
-
-TEXT:
-${input.rawText.slice(0, 3000)}`,
-          500
+  "highlights": ["achievement1", "achievement2", ...up to 5]
+}`;
+        const userContent = input.pdfBase64
+          ? [
+              { type: "document", source: { type: "base64", media_type: "application/pdf", data: input.pdfBase64 } },
+              { type: "text", text: extractPrompt },
+            ]
+          : `${extractPrompt}\n\nTEXT:\n${input.rawText.slice(0, 3000)}`;
+        const raw = await claude(
+          `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
+Return ONLY valid JSON, no markdown, no explanation.`,
+          userContent,
+          1024
         );
         const clean = raw.replace(/```json|```/g, "").trim();
         setProfile(JSON.parse(clean));
