@@ -1,3 +1,5 @@
+import { requireAuth } from "./_auth.js";
+
 function titleCase(str) {
   if (!str) return "";
   return str.replace(/\b\w/g, c => c.toUpperCase());
@@ -6,6 +8,11 @@ function titleCase(str) {
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const userId = await requireAuth(req);
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
   const pdlKey = process.env.PDL_API_KEY;

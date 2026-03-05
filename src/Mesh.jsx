@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { claude } from "./api";
+import Settings from "./Settings";
+import UserMenu from "./UserMenu";
 
 const AGENTS = [
   {
@@ -61,7 +63,7 @@ const MAX_TURNS      = 4;
 function uid()  { return Math.random().toString(36).slice(2, 8); }
 function now()  { return new Date().toLocaleTimeString("en", { hour12: false }); }
 
-export default function Mesh({ userAgent }) {
+export default function Mesh({ userAgent, onUpdateAgent }) {
   // Build agents list: replace demo a1 with onboarded user if provided
   const agents = useMemo(() => {
     if (!userAgent) return AGENTS;
@@ -94,6 +96,7 @@ export default function Mesh({ userAgent }) {
   const [decisions,   setDecisions]   = useState({});
   const [log,         setLog]         = useState([]);
   const [paused,      setPaused]      = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const threadsRef  = useRef([]);
   const pausedRef   = useRef(false);
@@ -352,11 +355,19 @@ Write a crisp opening message: who you represent and exactly why you're reaching
             </span>
           )}
           <button
+            onClick={() => setShowSettings(true)}
+            style={{ background: "#0f0f1e", border: "1px solid #252540", color: "#4b5563", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13, lineHeight: 1, transition: "all 0.15s" }}
+            onMouseEnter={e => { e.target.style.borderColor = "#6366f1"; e.target.style.color = "#8892b0"; }}
+            onMouseLeave={e => { e.target.style.borderColor = "#252540"; e.target.style.color = "#4b5563"; }}
+            title="Settings"
+          >⚙</button>
+          <button
             onClick={() => setPaused(p => !p)}
             style={{ background: paused ? "#140808" : "#0f0f1e", border: `1px solid ${paused ? "#4a1515" : "#252540"}`, color: paused ? "#f87171" : "#4b5563", padding: "5px 14px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: paused ? "#ef4444" : "#10b981", display: "inline-block", animation: paused ? "none" : "pulse 2s infinite" }} />
             {paused ? "Paused" : "Live"}
           </button>
+          <UserMenu />
         </div>
       </div>
 
@@ -559,6 +570,14 @@ Write a crisp opening message: who you represent and exactly why you're reaching
           </div>
         </div>
       </div>
+
+      {showSettings && userAgent && (
+        <Settings
+          userAgent={userAgent}
+          onSave={onUpdateAgent}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
 
       <style>{`
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.15} }

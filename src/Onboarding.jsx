@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { claude } from "./api";
+import { claude, fetchLinkedIn } from "./api";
 import mammoth from "mammoth";
+import UserMenu from "./UserMenu";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
-const GUARDRAILS_BY_INTENT = {
+export const GUARDRAILS_BY_INTENT = {
   open_to_work: [
     { id: "salary",     label: "Salary negotiation",      desc: "Before any comp figures are shared",        verb: "discuss salary" },
     { id: "calendar",   label: "Calendar / availability",  desc: "Before scheduling anything",                verb: "share your calendar" },
@@ -46,7 +47,7 @@ const GUARDRAILS_BY_INTENT = {
   ],
 };
 
-const DEFAULT_LOOPS_BY_INTENT = {
+export const DEFAULT_LOOPS_BY_INTENT = {
   open_to_work:  ["salary", "calendar", "equity"],
   hiring:        ["comp_offer", "offer", "refcheck"],
   collaborating: ["coauthor", "nda", "resources"],
@@ -54,7 +55,7 @@ const DEFAULT_LOOPS_BY_INTENT = {
   networking:    ["calendar", "contacts", "personal"],
 };
 
-const INTENT_OPTIONS = {
+export const INTENT_OPTIONS = {
   open_to_work:  { label: "Open to work",       icon: "◈", color: "#6366f1", desc: "Your agent seeks and evaluates opportunities" },
   hiring:        { label: "Hiring",              icon: "⟡", color: "#10b981", desc: "Your agent scouts and vets candidates" },
   collaborating: { label: "Collaborating",       icon: "◎", color: "#f59e0b", desc: "Your agent finds research or project partners" },
@@ -247,9 +248,7 @@ function StepExtract({ input, onNext }) {
 }`;
         if (input.linkedinUrl) {
           // Use People Data Labs API to enrich LinkedIn profile
-          const pdlRes = await fetch(`/api/linkedin?url=${encodeURIComponent(input.linkedinUrl)}`);
-          if (!pdlRes.ok) throw new Error("PDL lookup failed");
-          const pdlData = await pdlRes.json();
+          const pdlData = await fetchLinkedIn(input.linkedinUrl);
           setProfile(pdlData.profile);
         } else {
           let raw;
@@ -877,7 +876,7 @@ export default function Onboarding({ onComplete }) {
             </div>
           ))}
         </div>
-        <div style={{ width: 60 }} />
+        <UserMenu />
       </div>
 
       {/* Body */}
