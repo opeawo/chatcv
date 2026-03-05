@@ -433,8 +433,10 @@ Return JSON with concise paragraphs (under 60 words each):
       );
       const clean = raw.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
-      setGoals(parsed.goals);
-      setDealbreak(parsed.dealbreakers);
+      const g = typeof parsed.goals === "string" ? parsed.goals : Array.isArray(parsed.goals) ? parsed.goals.join(" ") : String(parsed.goals || "");
+      const d = typeof parsed.dealbreakers === "string" ? parsed.dealbreakers : Array.isArray(parsed.dealbreakers) ? parsed.dealbreakers.join(" ") : String(parsed.dealbreakers || "");
+      setGoals(g);
+      setDealbreak(d);
     } catch { /* keep existing text on failure */ }
     setLoading(false);
   };
@@ -461,14 +463,16 @@ Return JSON:
   "dealbreakers": "2-3 specific dealbreakers as a paragraph",
   "reasoning": "one sentence why"
 }`,
-        250
+        400
       );
       const clean = raw.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
       setSuggested(parsed);
       setSelected(parsed.intent);
-      setGoals(parsed.goals);
-      setDealbreak(parsed.dealbreakers);
+      const g = typeof parsed.goals === "string" ? parsed.goals : Array.isArray(parsed.goals) ? parsed.goals.join(" ") : String(parsed.goals || "");
+      const d = typeof parsed.dealbreakers === "string" ? parsed.dealbreakers : Array.isArray(parsed.dealbreakers) ? parsed.dealbreakers.join(" ") : String(parsed.dealbreakers || "");
+      setGoals(g);
+      setDealbreak(d);
       setPhase("done");
     } catch {
       setPhase("done");
@@ -544,8 +548,8 @@ Return JSON:
 
           <button
             onClick={() => onNext({ intent: selected, goals, dealbreakers: dealbreak })}
-            disabled={!selected || !goals.trim()}
-            style={{ background: selected && goals.trim() ? "#6366f1" : "#1a1a30", border: "none", color: selected && goals.trim() ? "white" : "#3d3d5c", padding: "13px 36px", borderRadius: 12, cursor: selected && goals.trim() ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 700, boxShadow: selected && goals.trim() ? "0 4px 24px #6366f140" : "none", transition: "all 0.2s" }}>
+            disabled={!selected || !(goals || "").trim()}
+            style={{ background: selected && (goals || "").trim() ? "#6366f1" : "#1a1a30", border: "none", color: selected && (goals || "").trim() ? "white" : "#3d3d5c", padding: "13px 36px", borderRadius: 12, cursor: selected && (goals || "").trim() ? "pointer" : "not-allowed", fontSize: 14, fontWeight: 700, boxShadow: selected && (goals || "").trim() ? "0 4px 24px #6366f140" : "none", transition: "all 0.2s" }}>
             Set my agent's intent →
           </button>
         </>
