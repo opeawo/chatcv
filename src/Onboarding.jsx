@@ -201,7 +201,7 @@ function StepExtract({ input, onNext }) {
   "years": "years of experience as a number string e.g. '5' or '15+'",
   "summary": "2-3 sentence professional summary",
   "skills": ["skill1", "skill2", ...up to 8],
-  "highlights": ["achievement1", "achievement2", ...up to 5]
+  "highlights": ["achievement1", "achievement2", ...up to 20 distinct ones]
 }`;
         let raw;
         if (input.linkedinUrl) {
@@ -212,7 +212,7 @@ Search the web for this person's professional information. Return ONLY valid JSO
             `Search the web for the person at this LinkedIn URL: ${input.linkedinUrl}
 Find their name, current role, company, past roles, skills, and achievements.
 Then return the result as JSON.\n\n${extractPrompt}`,
-            1024,
+            4096,
             [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }]
           );
         } else if (input.pdfBase64) {
@@ -223,14 +223,14 @@ Return ONLY valid JSON, no markdown, no explanation.`,
               { type: "document", source: { type: "base64", media_type: "application/pdf", data: input.pdfBase64 } },
               { type: "text", text: extractPrompt },
             ],
-            1024
+            4096
           );
         } else {
           raw = await claude(
             `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
 Return ONLY valid JSON, no markdown, no explanation.`,
             `${extractPrompt}\n\nTEXT:\n${input.rawText.slice(0, 3000)}`,
-            1024
+            4096
           );
         }
         const clean = raw.replace(/```json|```/g, "").trim();
