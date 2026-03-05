@@ -59,6 +59,7 @@ const STATUS_META = {
 const THINK_INTERVAL = 4000;
 const REPLY_DELAY    = 2600;
 const MAX_TURNS      = 4;
+const MAX_CONNECTIONS_DAY = 10; // free tier: 10/day (pro tier: 100/day, coming later)
 
 function uid()  { return Math.random().toString(36).slice(2, 8); }
 function now()  { return new Date().toLocaleTimeString("en", { hour12: false }); }
@@ -215,6 +216,16 @@ Rules:
     setAgentAction(agent.id, true, "Scanning network…");
 
     try {
+      // ── daily connection limit ──
+      const todayStart = new Date().setHours(0, 0, 0, 0);
+      const connectionsToday = threadsRef.current.filter(t =>
+        t.a === agent.id && t.startedAt >= todayStart
+      ).length;
+      if (connectionsToday >= MAX_CONNECTIONS_DAY) {
+        setAgentAction(agent.id, false, `Daily limit reached (${connectionsToday}/${MAX_CONNECTIONS_DAY})`);
+        return;
+      }
+
       const untouched = agents.filter(a =>
         a.id !== agent.id &&
         !threadsRef.current.find(t =>
@@ -231,7 +242,15 @@ Rules:
         `You are ${agent.name}'s autonomous AI career agent on chat.cv.
 YOUR PROFILE: ${agent.background}
 YOUR GOALS: ${agent.goals.join("; ")}
-YOUR DEALBREAKERS: ${agent.dealbreakers.join("; ")}`,
+YOUR DEALBREAKERS: ${agent.dealbreakers.join("; ")}
+
+MATCHING RULES (non-negotiable):
+- ONLY connect if this person DIRECTLY matches your goals — they themselves can fill a role, hire you, collaborate with you, or invest in you.
+- NEVER connect because someone "might know" the right person, "is adjacent to", "could introduce you to", or "is in a related field".
+- If you would need an introduction FROM this person to reach your actual target, that is NOT a match. Reject it.
+- A VC is NOT a match for someone looking for ML engineers. A product manager is NOT a match for someone hiring backend engineers. Only direct fits.
+- When in doubt, DO NOT connect. You have a limited budget of ${MAX_CONNECTIONS_DAY} connections per day — be extremely selective.
+- Score the match 1-10. Only scores 8+ should connect.`,
         `Evaluate if you should connect with:
 Name: ${candidate.name} — ${candidate.title} at ${candidate.company}
 Status: ${candidate.status}
@@ -239,7 +258,7 @@ Goals: ${candidate.goals.join("; ")}
 Background: ${candidate.background}
 
 Reply ONLY with valid JSON (no markdown):
-{"connect":true/false,"reason":"one sentence why or why not","opener":"one sentence on why you want to connect — do not suggest a call"}`,
+{"connect":true/false,"score":1-10,"reason":"one sentence — why this is or is not a direct match"}`,
         160
       );
 
@@ -247,9 +266,10 @@ Reply ONLY with valid JSON (no markdown):
       try { decision = JSON.parse(raw.replace(/```json|```/g, "").trim()); }
       catch { decision = null; }
 
-      if (!decision?.connect) {
-        addLog(`${agent.name} → ${candidate.name}: no alignment`, "scan");
-        setAgentAction(agent.id, false, `Skipped ${candidate.name} (no fit)`);
+      const score = decision?.score || 0;
+      if (!decision?.connect || score < 8) {
+        addLog(`${agent.name} → ${candidate.name}: rejected (${score}/10) — ${decision?.reason || "no match"}`, "scan");
+        setAgentAction(agent.id, false, `Skipped ${candidate.name} (${score}/10)`);
         return;
       }
 
@@ -330,6 +350,8 @@ Write a crisp opening message: who you represent and exactly why you're reaching
   const pendingCount = Object.keys(decisions).length;
   const totalMsgs    = myThreads.reduce((n, t) => n + t.messages.filter(m => m.text).length, 0);
   const concluded    = myThreads.filter(t => t.status === "concluded").length;
+  const todayStart   = useMemo(() => new Date().setHours(0, 0, 0, 0), []);
+  const connectionsToday = threads.filter(t => t.a === myId && t.startedAt >= todayStart).length;
 
   return (
     <div style={{ fontFamily: "'Instrument Sans',-apple-system,sans-serif", background: "#07070f", height: "100vh", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -347,7 +369,10 @@ Write a crisp opening message: who you represent and exactly why you're reaching
         </div>
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "#2d2d4a" }}>
-            {myThreads.length} threads &nbsp;·&nbsp; {totalMsgs} messages &nbsp;·&nbsp; {concluded} concluded
+            {myThreads.length} threads &nbsp;·&nbsp; {totalMsgs} msgs &nbsp;·&nbsp; {concluded} concluded &nbsp;·&nbsp;
+            <span style={{ color: connectionsToday >= MAX_CONNECTIONS_DAY ? "#ef4444" : "#3d3d5c" }}>
+              {connectionsToday}/{MAX_CONNECTIONS_DAY} today
+            </span>
           </span>
           {pendingCount > 0 && (
             <span style={{ background: "#1a0808", border: "1px solid #4a1515", color: "#f87171", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
