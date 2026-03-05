@@ -161,9 +161,10 @@ THEIR BACKGROUND: ${other.background}
 Rules:
 - Speak as ${me.name}'s agent, not as ${me.name} directly.
 - Be direct, professional, 2–3 sentences max.
-- Push toward a concrete outcome: meeting, offer, collaboration, or clear next step.
+- Prefer async outcomes: share information, make introductions, send details, or agree on next steps without a call.
+- Only suggest a meeting or call when it genuinely requires live discussion (e.g. deep technical evaluation, deal negotiation, partnership scoping) — NOT for referrals, info sharing, or simple intros.
 - If the conversation has reached a natural conclusion, close it with a clear outcome summary.
-- Only say HUMAN_LOOP_NEEDED:[reason] if you genuinely cannot proceed without the human (e.g. agreeing to salary, sharing calendar).`,
+- Only say HUMAN_LOOP_NEEDED:[reason] if you genuinely cannot proceed without the human (e.g. agreeing to salary, sharing calendar, committing to a deadline).`,
         `Conversation:\n${history}\n\nYour turn as ${me.name}'s agent.`,
         200
       );
@@ -235,7 +236,7 @@ Goals: ${candidate.goals.join("; ")}
 Background: ${candidate.background}
 
 Reply ONLY with valid JSON (no markdown):
-{"connect":true/false,"reason":"one sentence why or why not","opener":"your opening message if connect=true"}`,
+{"connect":true/false,"reason":"one sentence why or why not","opener":"one sentence on why you want to connect — do not suggest a call"}`,
         160
       );
 
@@ -269,7 +270,7 @@ YOUR GOALS: ${agent.goals.join("; ")}
 You decided to connect with ${candidate.name}'s agent (${candidate.title} at ${candidate.company}).
 Reason: ${decision.reason}
 
-Write a crisp opening message: who you represent, exactly why you're reaching out, one proposed next step. 2–3 sentences. You are an AI agent acting autonomously.`,
+Write a crisp opening message: who you represent and exactly why you're reaching out. 2–3 sentences. Do not propose a call or meeting in the opening message — focus on establishing relevance first. You are an AI agent acting autonomously.`,
         decision.opener || `Open a conversation with ${candidate.name}'s agent.`,
         180
       );
@@ -320,10 +321,12 @@ Write a crisp opening message: who you represent, exactly why you're reaching ou
     addLog("Decision dismissed by human", "info");
   }, [addLog]);
 
+  const myId         = agents.find(a => a.isYou)?.id;
+  const myThreads    = threads.filter(t => t.a === myId || t.b === myId);
   const activeThread = threads.find(t => t.id === activeId);
   const pendingCount = Object.keys(decisions).length;
-  const totalMsgs    = threads.reduce((n, t) => n + t.messages.filter(m => m.text).length, 0);
-  const concluded    = threads.filter(t => t.status === "concluded").length;
+  const totalMsgs    = myThreads.reduce((n, t) => n + t.messages.filter(m => m.text).length, 0);
+  const concluded    = myThreads.filter(t => t.status === "concluded").length;
 
   return (
     <div style={{ fontFamily: "'Instrument Sans',-apple-system,sans-serif", background: "#07070f", height: "100vh", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -341,7 +344,7 @@ Write a crisp opening message: who you represent, exactly why you're reaching ou
         </div>
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "#2d2d4a" }}>
-            {threads.length} threads &nbsp;·&nbsp; {totalMsgs} messages &nbsp;·&nbsp; {concluded} concluded
+            {myThreads.length} threads &nbsp;·&nbsp; {totalMsgs} messages &nbsp;·&nbsp; {concluded} concluded
           </span>
           {pendingCount > 0 && (
             <span style={{ background: "#1a0808", border: "1px solid #4a1515", color: "#f87171", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
@@ -396,9 +399,9 @@ Write a crisp opening message: who you represent, exactly why you're reaching ou
         {/* THREADS */}
         <div style={{ borderRight: "1px solid #141422", overflowY: "auto", background: "#080810" }}>
           <div style={{ padding: "12px 16px", borderBottom: "1px solid #0f0f1e", fontSize: 9, color: "#252545", letterSpacing: "0.14em", fontWeight: 700 }}>
-            CONVERSATIONS {threads.length > 0 && `— ${threads.length}`}
+            CONVERSATIONS {myThreads.length > 0 && `— ${myThreads.length}`}
           </div>
-          {threads.length === 0 && (
+          {myThreads.length === 0 && (
             <div style={{ padding: "48px 24px", textAlign: "center" }}>
               <div style={{ fontSize: 28, opacity: 0.04, marginBottom: 16, lineHeight: 1.5 }}>◎ ◎<br />◎ ◎ ◎</div>
               <div style={{ fontSize: 12, color: "#252545", lineHeight: 1.9 }}>
@@ -407,7 +410,7 @@ Write a crisp opening message: who you represent, exactly why you're reaching ou
               </div>
             </div>
           )}
-          {[...threads].sort((a, b) => b.updatedAt - a.updatedAt).map(thread => {
+          {[...myThreads].sort((a, b) => b.updatedAt - a.updatedAt).map(thread => {
             const a = byId(thread.a), b = byId(thread.b);
             const last = [...thread.messages].reverse().find(m => m.text);
             const isLive = activeId === thread.id;
