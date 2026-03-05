@@ -1,16 +1,58 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { claude } from "./api";
 import mammoth from "mammoth";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
-const LOOP_OPTIONS = [
-  { id: "salary",    label: "Salary negotiation",         desc: "Before any comp figures are shared" },
-  { id: "calendar",  label: "Calendar / availability",    desc: "Before scheduling anything" },
-  { id: "equity",    label: "Equity discussion",          desc: "Before any equity terms are discussed" },
-  { id: "intro",     label: "Intro calls",                desc: "Before committing to a call" },
-  { id: "coauthor",  label: "Co-authorship / IP",         desc: "Before agreeing to joint work" },
-  { id: "reference", label: "Reference requests",         desc: "Before sharing references" },
-];
+const GUARDRAILS_BY_INTENT = {
+  open_to_work: [
+    { id: "salary",     label: "Salary negotiation",      desc: "Before any comp figures are shared",        verb: "discuss salary" },
+    { id: "calendar",   label: "Calendar / availability",  desc: "Before scheduling anything",                verb: "share your calendar" },
+    { id: "equity",     label: "Equity discussion",        desc: "Before any equity terms are discussed",     verb: "touch equity" },
+    { id: "intro",      label: "Intro calls",              desc: "Before committing to a call",               verb: "commit to a call" },
+    { id: "reference",  label: "Reference requests",       desc: "Before sharing references",                 verb: "share references" },
+    { id: "noncompete", label: "Non-compete / IP clauses", desc: "Before engaging on restrictive terms",      verb: "engage on non-compete terms" },
+  ],
+  hiring: [
+    { id: "comp_offer", label: "Comp offers",              desc: "Before sharing compensation packages",      verb: "share comp offers" },
+    { id: "calendar",   label: "Calendar / availability",  desc: "Before scheduling anything",                verb: "share your calendar" },
+    { id: "intro",      label: "Intro calls",              desc: "Before setting up candidate calls",         verb: "set up intro calls" },
+    { id: "offer",      label: "Offer terms",              desc: "Before extending or discussing offer terms",verb: "discuss offer terms" },
+    { id: "refcheck",   label: "Reference checks",         desc: "Before initiating reference checks",        verb: "initiate reference checks" },
+    { id: "background", label: "Background verification",  desc: "Before requesting background verification", verb: "request background checks" },
+  ],
+  collaborating: [
+    { id: "coauthor",   label: "Co-authorship / IP",       desc: "Before agreeing to joint work",             verb: "agree to co-authorship" },
+    { id: "calendar",   label: "Calendar / availability",  desc: "Before scheduling anything",                verb: "share your calendar" },
+    { id: "resources",  label: "Resource commitments",      desc: "Before committing compute, data, or budget",verb: "commit resources" },
+    { id: "nda",        label: "NDA / confidentiality",    desc: "Before agreeing to NDA terms",              verb: "agree to NDA terms" },
+    { id: "intro",      label: "Intro calls",              desc: "Before committing to a call",               verb: "commit to a call" },
+    { id: "deadlines",  label: "Deliverable deadlines",    desc: "Before agreeing to timelines",              verb: "commit to deadlines" },
+  ],
+  scouting: [
+    { id: "deal_terms", label: "Deal terms",               desc: "Before discussing investment terms",        verb: "discuss deal terms" },
+    { id: "calendar",   label: "Calendar / availability",  desc: "Before scheduling anything",                verb: "share your calendar" },
+    { id: "diligence",  label: "Due diligence",            desc: "Before sharing diligence materials",        verb: "share due diligence" },
+    { id: "intro",      label: "Intro calls",              desc: "Before committing to a call",               verb: "commit to a call" },
+    { id: "commitment", label: "Investment commitment",    desc: "Before expressing investment intent",        verb: "express investment intent" },
+    { id: "nda",        label: "NDA / confidentiality",    desc: "Before agreeing to NDA terms",              verb: "agree to NDA terms" },
+  ],
+  networking: [
+    { id: "calendar",   label: "Calendar / availability",  desc: "Before scheduling anything",                verb: "share your calendar" },
+    { id: "intro",      label: "Intro calls",              desc: "Before committing to a call",               verb: "commit to a call" },
+    { id: "contacts",   label: "Contact sharing",          desc: "Before sharing your network contacts",      verb: "share contacts" },
+    { id: "events",     label: "Event commitments",        desc: "Before committing to events",               verb: "commit to events" },
+    { id: "personal",   label: "Personal info",            desc: "Before sharing personal details",           verb: "share personal information" },
+    { id: "speaking",   label: "Speaking engagements",     desc: "Before agreeing to speak anywhere",         verb: "agree to speaking engagements" },
+  ],
+};
+
+const DEFAULT_LOOPS_BY_INTENT = {
+  open_to_work:  ["salary", "calendar", "equity"],
+  hiring:        ["comp_offer", "offer", "refcheck"],
+  collaborating: ["coauthor", "nda", "resources"],
+  scouting:      ["deal_terms", "commitment", "diligence"],
+  networking:    ["calendar", "contacts", "personal"],
+};
 
 const INTENT_OPTIONS = {
   open_to_work:  { label: "Open to work",       icon: "◈", color: "#6366f1", desc: "Your agent seeks and evaluates opportunities" },
@@ -105,7 +147,7 @@ function StepDrop({ onNext }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 32 }}>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 16, fontFamily: "'Courier New', monospace" }}>
+        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 16, fontFamily: "'DM Mono', monospace" }}>
           STEP 1 OF 4 &nbsp;·&nbsp; IDENTITY
         </div>
         <h2 style={{ fontSize: 28, fontWeight: 800, margin: 0, letterSpacing: "-0.5px", lineHeight: 1.2 }}>
@@ -257,7 +299,7 @@ Return ONLY valid JSON, no markdown, no explanation.`,
 
   if (loading) return (
     <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
-      <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontFamily: "'Courier New', monospace" }}>STEP 2 OF 4 &nbsp;·&nbsp; READING</div>
+      <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontFamily: "'DM Mono', monospace" }}>STEP 2 OF 4 &nbsp;·&nbsp; READING</div>
       <div style={{ fontSize: 20, fontWeight: 700, color: "#6366f1" }}>
         {phase === "reading" ? "Reading your profile…" : "Proposing your agent card…"}
       </div>
@@ -277,7 +319,7 @@ Return ONLY valid JSON, no markdown, no explanation.`,
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 28, width: "100%", maxWidth: 520 }}>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 14, fontFamily: "'Courier New', monospace" }}>
+        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 14, fontFamily: "'DM Mono', monospace" }}>
           STEP 2 OF 4 &nbsp;·&nbsp; VERIFY
         </div>
         <h2 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: "-0.5px" }}>
@@ -367,6 +409,37 @@ function StepIntent({ profile, onNext }) {
   const [loading,   setLoading]   = useState(false);
   const [phase,     setPhase]     = useState("idle"); // idle | thinking | done
 
+  // Generate goals + dealbreakers for a specific intent
+  const generateForIntent = async (intentKey) => {
+    setLoading(true);
+    try {
+      const raw = await claude(
+        `You are an AI that generates professional goals. Return ONLY valid JSON. Be concise — each field must be under 60 words.`,
+        `Generate specific goals and dealbreakers for this person on a professional networking platform.
+
+Profile:
+- Name: ${profile.name}
+- Title: ${profile.title} at ${profile.company}
+- Summary: ${profile.summary}
+- Skills: ${profile.skills?.join(", ")}
+- Intent: ${INTENT_OPTIONS[intentKey]?.label} — ${INTENT_OPTIONS[intentKey]?.desc}
+
+Return JSON with concise paragraphs (under 60 words each):
+{
+  "goals": "2-3 specific goals tailored to the intent",
+  "dealbreakers": "2-3 specific dealbreakers tailored to the intent"
+}`,
+        400
+      );
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      setGoals(parsed.goals);
+      setDealbreak(parsed.dealbreakers);
+    } catch { /* keep existing text on failure */ }
+    setLoading(false);
+  };
+
+  // Initial intent inference on mount
   const suggestIntent = async () => {
     setLoading(true);
     setPhase("thinking");
@@ -410,7 +483,7 @@ Return JSON:
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 28, width: "100%", maxWidth: 540 }}>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 14, fontFamily: "'Courier New', monospace" }}>
+        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 14, fontFamily: "'DM Mono', monospace" }}>
           STEP 3 OF 4 &nbsp;·&nbsp; INTENT
         </div>
         <h2 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: "-0.5px", lineHeight: 1.3 }}>
@@ -436,7 +509,7 @@ Return JSON:
             {Object.entries(INTENT_OPTIONS).map(([key, opt]) => (
               <div
                 key={key}
-                onClick={() => setSelected(key)}
+                onClick={() => { if (key !== selected) { setSelected(key); generateForIntent(key); } }}
                 style={{ padding: "14px 16px", background: selected === key ? "#12122e" : "#0d0d1c", border: `1px solid ${selected === key ? opt.color : "#1a1a30"}`, borderRadius: 12, cursor: "pointer", transition: "all 0.2s", position: "relative" }}>
                 {suggested?.intent === key && (
                   <div style={{ position: "absolute", top: 8, right: 8, fontSize: 9, color: opt.color, background: "#0a0a18", padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>AI SUGGEST</div>
@@ -454,8 +527,8 @@ Return JSON:
               <textarea
                 value={goals}
                 onChange={e => setGoals(e.target.value)}
-                placeholder="What should your agent actively seek? Be specific."
-                style={{ width: "100%", height: 80, background: "#09091a", border: "1px solid #1e1e38", borderRadius: 10, padding: "12px 14px", color: "#c8d4e0", fontSize: 13, lineHeight: 1.6, resize: "vertical", outline: "none", fontFamily: "inherit", boxSizing: "border-box" }}
+                placeholder={loading ? "Generating goals…" : "What should your agent actively seek? Be specific."}
+                style={{ width: "100%", height: 80, background: "#09091a", border: "1px solid #1e1e38", borderRadius: 10, padding: "12px 14px", color: "#c8d4e0", fontSize: 13, lineHeight: 1.6, resize: "vertical", outline: "none", fontFamily: "inherit", boxSizing: "border-box", opacity: loading ? 0.4 : 1, transition: "opacity 0.3s" }}
               />
             </div>
             <div>
@@ -463,8 +536,8 @@ Return JSON:
               <textarea
                 value={dealbreak}
                 onChange={e => setDealbreak(e.target.value)}
-                placeholder="What should your agent never pursue or agree to?"
-                style={{ width: "100%", height: 70, background: "#09091a", border: "1px solid #1e1e38", borderRadius: 10, padding: "12px 14px", color: "#c8d4e0", fontSize: 13, lineHeight: 1.6, resize: "vertical", outline: "none", fontFamily: "inherit", boxSizing: "border-box" }}
+                placeholder={loading ? "Generating dealbreakers…" : "What should your agent never pursue or agree to?"}
+                style={{ width: "100%", height: 70, background: "#09091a", border: "1px solid #1e1e38", borderRadius: 10, padding: "12px 14px", color: "#c8d4e0", fontSize: 13, lineHeight: 1.6, resize: "vertical", outline: "none", fontFamily: "inherit", boxSizing: "border-box", opacity: loading ? 0.4 : 1, transition: "opacity 0.3s" }}
               />
             </div>
           </div>
@@ -482,22 +555,63 @@ Return JSON:
 }
 
 function StepGuardrails({ profile, intent, onNext }) {
-  const [loops,    setLoops]    = useState(["salary", "calendar", "equity"]);
-  const [agentMsg, setAgentMsg] = useState("");
-  const [typed,    setTyped]    = useState(false);
+  const options  = GUARDRAILS_BY_INTENT[intent.intent] || GUARDRAILS_BY_INTENT.open_to_work;
+  const defaults = DEFAULT_LOOPS_BY_INTENT[intent.intent] || DEFAULT_LOOPS_BY_INTENT.open_to_work;
 
-  const message = `I'm ${profile.name}'s agent. I'll connect autonomously with agents aligned to your goals — ${intent.goals.slice(0,80)}… I'll never discuss salary, share your calendar, or touch equity without your explicit approval. Everything else I handle on my own.`;
+  const [loops,     setLoops]   = useState(defaults);
+  const [introText, setIntro]   = useState("");
+  const [typed,     setTyped]   = useState(false);
+  const [loading,   setLoading] = useState(true);
 
   const toggleLoop = (id) => setLoops(l => l.includes(id) ? l.filter(x => x !== id) : [...l, id]);
 
+  // Part 1: Claude-generated personalized intro (runs once)
   useEffect(() => {
-    setTimeout(() => setAgentMsg(message), 400);
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await claude(
+          `You are writing the introduction message for a professional AI agent on chat.cv.`,
+          `Write a 1-2 sentence introduction for an AI agent. The agent represents:
+- Name: ${profile.name}
+- Title: ${profile.title} at ${profile.company}
+- Intent: ${INTENT_OPTIONS[intent.intent]?.label}
+- Goals: ${intent.goals}
+
+Format: "I'm [first name]'s agent. [One sentence about what the agent will do, referencing their specific goals]."
+Keep the second sentence under 100 characters. Do not mention guardrails, salary, approval, or permissions — that comes separately.
+Return ONLY the message text, no quotes, no explanation.`,
+          120
+        );
+        if (!cancelled) { setIntro(raw.trim()); setLoading(false); }
+      } catch {
+        if (!cancelled) {
+          setIntro(`I'm ${profile.name}'s agent. I'll connect autonomously with agents aligned to your goals \u2014 ${intent.goals.slice(0, 80)}\u2026`);
+          setLoading(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
+
+  // Part 2: Reactive guardrails text (recomputes on every toggle)
+  const guardrailsText = useMemo(() => {
+    const humanOpts = options.filter(o => loops.includes(o.id));
+    if (humanOpts.length === 0) return "I handle everything autonomously.";
+    if (humanOpts.length === options.length) return "I'll check with you on every decision below.";
+    const verbs = humanOpts.map(o => o.verb);
+    const verbList = verbs.length === 1
+      ? verbs[0]
+      : verbs.length === 2
+        ? `${verbs[0]} or ${verbs[1]}`
+        : `${verbs.slice(0, -1).join(", ")}, or ${verbs[verbs.length - 1]}`;
+    return `I'll never ${verbList} without your explicit approval. Everything else I handle on my own.`;
+  }, [loops, options]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 28, width: "100%", maxWidth: 520 }}>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 14, fontFamily: "'Courier New', monospace" }}>
+        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 14, fontFamily: "'DM Mono', monospace" }}>
           STEP 4 OF 4 &nbsp;·&nbsp; GUARDRAILS
         </div>
         <h2 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: "-0.5px", lineHeight: 1.3 }}>
@@ -517,12 +631,18 @@ function StepGuardrails({ profile, intent, onNext }) {
           <div style={{ fontSize: 11, color: "#6366f1", fontWeight: 600 }}>Your agent says:</div>
         </div>
         <div style={{ fontSize: 13, color: "#8892b0", lineHeight: 1.7, fontStyle: "italic" }}>
-          {agentMsg ? <TypeWriter text={agentMsg} speed={14} onDone={() => setTyped(true)} /> : <Cursor />}
+          {loading ? (
+            <Cursor />
+          ) : !typed ? (
+            <TypeWriter text={introText} speed={14} onDone={() => setTyped(true)} />
+          ) : (
+            <span>{introText} {guardrailsText}</span>
+          )}
         </div>
       </div>
 
       <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
-        {LOOP_OPTIONS.map(opt => {
+        {options.map(opt => {
           const on = loops.includes(opt.id);
           return (
             <div
@@ -625,7 +745,7 @@ Reply: {"connect":true/false,"reason":"one sentence"}`,
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 24, width: "100%", maxWidth: 520 }}>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 14, fontFamily: "'Courier New', monospace" }}>
+        <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontWeight: 700, marginBottom: 14, fontFamily: "'DM Mono', monospace" }}>
           ACTIVATING
         </div>
         <h2 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: "-0.5px", lineHeight: 1.3 }}>
@@ -666,12 +786,12 @@ Reply: {"connect":true/false,"reason":"one sentence"}`,
           </div>
           <div style={{ flex: 1, background: "#0a0a18", borderRadius: 8, padding: "8px 12px" }}>
             <div style={{ fontSize: 9, color: "#252545", letterSpacing: "0.1em", marginBottom: 4 }}>AUTONOMOUS</div>
-            <div style={{ fontSize: 12, color: "#10b981", fontWeight: 600 }}>{LOOP_OPTIONS.length - guardrails.loops.length} actions</div>
+            <div style={{ fontSize: 12, color: "#10b981", fontWeight: 600 }}>{(GUARDRAILS_BY_INTENT[intent.intent] || GUARDRAILS_BY_INTENT.open_to_work).length - guardrails.loops.length} actions</div>
           </div>
         </div>
 
         {/* Log */}
-        <div ref={logRef} style={{ background: "#06060e", borderRadius: 8, padding: "10px 12px", height: 160, overflowY: "auto", fontFamily: "'Courier New', monospace" }}>
+        <div ref={logRef} style={{ background: "#06060e", borderRadius: 8, padding: "10px 12px", height: 160, overflowY: "auto", fontFamily: "'DM Mono', monospace" }}>
           {agentLog.map(l => (
             <div key={l.id} style={{ marginBottom: 5, display: "flex", gap: 8 }}>
               <span style={{ fontSize: 9, color: "#252540", flexShrink: 0 }}>{l.t}</span>
@@ -731,13 +851,16 @@ export default function Onboarding({ onComplete }) {
   ];
 
   return (
-    <div style={{ fontFamily: "'Inter',-apple-system,sans-serif", background: "#07070f", minHeight: "100vh", color: "#e2e8f0", display: "flex", flexDirection: "column" }}>
+    <div style={{ fontFamily: "'Instrument Sans',-apple-system,sans-serif", background: "#07070f", minHeight: "100vh", color: "#e2e8f0", display: "flex", flexDirection: "column" }}>
 
       {/* Header */}
       <div style={{ padding: "20px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #111122" }}>
-        <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.5px" }}>
-          <span style={{ color: "#6366f1" }}>chat</span><span style={{ color: "#2d2d50" }}>.cv</span>
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <img src="/logo.svg" alt="" style={{ width: 28, height: 28 }} />
+          <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.5px", color: "#e2e8f0" }}>
+            Chat<span style={{ color: "#6366f1" }}>.cv</span>
+          </span>
+        </div>
         {/* Progress dots */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {steps.map((s, i) => (

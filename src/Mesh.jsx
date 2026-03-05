@@ -326,14 +326,17 @@ Write a crisp opening message: who you represent, exactly why you're reaching ou
   const concluded    = threads.filter(t => t.status === "concluded").length;
 
   return (
-    <div style={{ fontFamily: "'Inter',-apple-system,sans-serif", background: "#07070f", height: "100vh", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ fontFamily: "'Instrument Sans',-apple-system,sans-serif", background: "#07070f", height: "100vh", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
       {/* HEADER */}
       <div style={{ background: "#0b0b18", borderBottom: "1px solid #161628", padding: "0 20px", height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.5px" }}>
-            <span style={{ color: "#6366f1" }}>chat</span><span style={{ color: "#2d2d50" }}>.cv</span>
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <img src="/logo.svg" alt="" style={{ width: 24, height: 24 }} />
+            <span style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.5px", color: "#e2e8f0" }}>
+              Chat<span style={{ color: "#6366f1" }}>.cv</span>
+            </span>
+          </div>
           <span style={{ fontSize: 9, color: "#2a2a45", background: "#0e0e1c", border: "1px solid #181830", padding: "2px 8px", borderRadius: 4, letterSpacing: "0.12em", fontWeight: 600 }}>AUTONOMOUS MESH</span>
         </div>
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
