@@ -58,6 +58,118 @@ function apiProxyPlugin() {
           res.end(JSON.stringify({ error: err.message }));
         }
       });
+
+      // LinkedIn / PDL enrichment proxy
+      server.middlewares.use("/api/linkedin", async (req, res) => {
+        if (req.method !== "GET") {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: "Method not allowed" }));
+          return;
+        }
+
+        const params = new URL(req.url, "http://localhost").searchParams;
+        const url = params.get("url");
+        if (!url) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: "Missing required query param: url" }));
+          return;
+        }
+
+        const pdlKey = process.env.PDL_API_KEY;
+        if (!pdlKey) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: "PDL_API_KEY not set in .env.local" }));
+          return;
+        }
+
+        try {
+          const pdlUrl = `https://api.peopledatalabs.com/v5/person/enrich?profile=${encodeURIComponent(url)}`;
+          const response = await fetch(pdlUrl, {
+            headers: { "X-Api-Key": pdlKey },
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            res.statusCode = response.status;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: `PDL API error: ${errorText}` }));
+            return;
+          }
+
+          const result = await response.json();
+          const d = result.data;
+
+          if (!d || result.status === 404) {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Profile not found" }));
+            return;
+          }
+
+          // Helper: title-case a string (PDL returns lowercase)
+          const titleCase = (s) => {
+            if (!s) return "";
+            return s.replace(/\b\w/g, c => c.toUpperCase());
+          };
+
+          // Helper: resolve title (PDL returns object or string)
+          const resolveTitle = (t) => {
+            if (!t) return "";
+            if (typeof t === "string") return t;
+            return t.name || t.role || JSON.stringify(t);
+          };
+
+          // Calculate years of experience
+          let years = "";
+          if (d.experience && d.experience.length > 0) {
+            const dates = d.experience.map(e => e.start_date).filter(Boolean).sort();
+            if (dates.length > 0) {
+              const earliest = new Date(dates[0]);
+              const diff = Math.floor((Date.now() - earliest.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+              years = `${diff}+`;
+            }
+          }
+
+          // Build highlights from experience
+          const highlights = (d.experience || [])
+            .filter(e => e.title && e.company && e.company.name)
+            .slice(0, 20)
+            .map(e => {
+              const jobTitle = titleCase(resolveTitle(e.title));
+              const companyName = titleCase(e.company.name);
+              const duration = e.start_date
+                ? `${e.start_date}${e.end_date ? ` - ${e.end_date}` : " - Present"}`
+                : "";
+              return `${jobTitle} at ${companyName}${duration ? ` (${duration})` : ""}`;
+            });
+
+          // Build summary from experience if job_summary is empty
+          let summary = d.job_summary || d.summary || "";
+          if (!summary && d.experience && d.experience.length > 0) {
+            const top3 = d.experience.slice(0, 3).map(e =>
+              `${titleCase(resolveTitle(e.title))} at ${titleCase(e.company?.name || "")}`
+            ).join(", ");
+            summary = `Professional with ${years ? years + " years" : "extensive"} experience. Recent roles include ${top3}.`;
+          }
+
+          const profile = {
+            name: titleCase(d.full_name || ""),
+            title: titleCase(d.job_title || ""),
+            company: titleCase(d.job_company_name || ""),
+            years,
+            summary,
+            skills: (d.skills || []).slice(0, 8).map(s => titleCase(s)),
+            highlights,
+          };
+
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ profile, likelihood: result.likelihood }));
+        } catch (err) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
     },
   };
 }

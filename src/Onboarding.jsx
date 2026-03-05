@@ -203,38 +203,35 @@ function StepExtract({ input, onNext }) {
   "skills": ["skill1", "skill2", ...up to 8],
   "highlights": ["achievement1", "achievement2", ...up to 20 distinct ones]
 }`;
-        let raw;
         if (input.linkedinUrl) {
-          // Use web search to research the LinkedIn profile
-          raw = await claude(
-            `You are an AI that extracts structured professional profile data from LinkedIn profiles.
-Search the web for this person's professional information. Return ONLY valid JSON, no markdown, no explanation.`,
-            `Search the web for the person at this LinkedIn URL: ${input.linkedinUrl}
-Find their name, current role, company, past roles, skills, and achievements.
-Then return the result as JSON.\n\n${extractPrompt}`,
-            4096,
-            [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }]
-          );
-        } else if (input.pdfBase64) {
-          raw = await claude(
-            `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
-Return ONLY valid JSON, no markdown, no explanation.`,
-            [
-              { type: "document", source: { type: "base64", media_type: "application/pdf", data: input.pdfBase64 } },
-              { type: "text", text: extractPrompt },
-            ],
-            4096
-          );
+          // Use People Data Labs API to enrich LinkedIn profile
+          const pdlRes = await fetch(`/api/linkedin?url=${encodeURIComponent(input.linkedinUrl)}`);
+          if (!pdlRes.ok) throw new Error("PDL lookup failed");
+          const pdlData = await pdlRes.json();
+          setProfile(pdlData.profile);
         } else {
-          raw = await claude(
-            `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
+          let raw;
+          if (input.pdfBase64) {
+            raw = await claude(
+              `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
 Return ONLY valid JSON, no markdown, no explanation.`,
-            `${extractPrompt}\n\nTEXT:\n${input.rawText.slice(0, 3000)}`,
-            4096
-          );
+              [
+                { type: "document", source: { type: "base64", media_type: "application/pdf", data: input.pdfBase64 } },
+                { type: "text", text: extractPrompt },
+              ],
+              4096
+            );
+          } else {
+            raw = await claude(
+              `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
+Return ONLY valid JSON, no markdown, no explanation.`,
+              `${extractPrompt}\n\nTEXT:\n${input.rawText.slice(0, 3000)}`,
+              4096
+            );
+          }
+          const clean = raw.replace(/```json|```/g, "").trim();
+          setProfile(JSON.parse(clean));
         }
-        const clean = raw.replace(/```json|```/g, "").trim();
-        setProfile(JSON.parse(clean));
         setPhase("done");
         setLoading(false);
       } catch {
