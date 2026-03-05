@@ -1,38 +1,50 @@
-import { useState, useEffect } from "react";
-import { SignIn, useAuth } from "@clerk/react";
+import { useState, useEffect, createContext, useContext } from "react";
 import Landing from "./Landing";
 import Onboarding from "./Onboarding";
 import Mesh from "./Mesh";
-import { setAuthTokenGetter } from "./api";
 
-const HAS_CLERK = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+// ── Auth Context ─────────────────────────────────────────────────────────────
 
-function AuthenticatedApp() {
-  const { getToken } = useAuth();
-  const [view, setView] = useState("onboarding"); // "onboarding" | "mesh"
-  const [userAgent, setUserAgent] = useState(null);
+const AuthContext = createContext(null);
+export function useAuthContext() { return useContext(AuthContext); }
 
-  // Set immediately during render (not in useEffect) so child component
-  // effects that call claude() already have a valid token getter.
-  // getToken is a stable Clerk function, so this is safe on every render.
-  setAuthTokenGetter(() => getToken());
+const DEMO_USERS = {
+  demo: { password: "demo", user: { name: "Demo User", email: "demo@chatcv.app" } },
+};
 
-  if (view === "onboarding" && !userAgent) {
-    return (
-      <Onboarding onComplete={(data) => { setUserAgent(data); setView("mesh"); }} />
-    );
-  }
-
-  return <Mesh userAgent={userAgent} onUpdateAgent={setUserAgent} />;
+function makeToken(username) {
+  return btoa(JSON.stringify({ sub: username, iat: Date.now() }));
 }
 
-function AuthModal({ onClose }) {
+// ── Login Modal ──────────────────────────────────────────────────────────────
+
+function LoginModal({ onClose, onLogin }) {
   const [visible, setVisible] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
   useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
+
+  const handleClose = () => { setVisible(false); setTimeout(onClose, 300); };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const entry = DEMO_USERS[username];
+    if (!entry || entry.password !== password) {
+      setError("Invalid username or password");
+      return;
+    }
+    onLogin(username, entry.user);
+  };
+
+  const handleDemo = () => {
+    onLogin("demo", DEMO_USERS.demo.user);
+  };
 
   return (
     <div
-      onClick={onClose}
+      onClick={handleClose}
       style={{
         position: "fixed", inset: 0,
         background: visible ? "rgba(0,0,0,0.7)" : "rgba(0,0,0,0)",
@@ -43,65 +55,143 @@ function AuthModal({ onClose }) {
       }}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
         style={{
+          width: 380, maxWidth: "90vw",
+          background: "#0a0a18", border: "1px solid #1e1e38", borderRadius: 16,
+          boxShadow: "0 8px 40px rgba(0,0,0,0.6)", padding: "32px 28px",
           transform: visible ? "translateY(0) scale(1)" : "translateY(12px) scale(0.97)",
-          opacity: visible ? 1 : 0,
-          transition: "all 0.3s ease",
+          opacity: visible ? 1 : 0, transition: "all 0.3s ease",
+          fontFamily: "'Instrument Sans',-apple-system,sans-serif",
         }}
       >
-        <SignIn routing="virtual" />
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#e2e8f0", letterSpacing: "-0.5px", marginBottom: 6 }}>
+            Sign in to Chat<span style={{ color: "#6366f1" }}>.cv</span>
+          </div>
+          <div style={{ fontSize: 13, color: "#4b5578" }}>Enter your credentials or use the demo account.</div>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: "#5a607a", display: "block", marginBottom: 6, fontWeight: 600 }}>Username</label>
+            <input
+              value={username} onChange={e => { setUsername(e.target.value); setError(""); }}
+              placeholder="demo"
+              autoFocus
+              style={{
+                width: "100%", padding: "10px 12px", background: "#09091a", border: "1px solid #1e1e38",
+                borderRadius: 8, color: "#e2e8f0", fontSize: 13, outline: "none", boxSizing: "border-box",
+                fontFamily: "inherit",
+              }}
+            />
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: 11, color: "#5a607a", display: "block", marginBottom: 6, fontWeight: 600 }}>Password</label>
+            <input
+              type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }}
+              placeholder="demo"
+              style={{
+                width: "100%", padding: "10px 12px", background: "#09091a", border: "1px solid #1e1e38",
+                borderRadius: 8, color: "#e2e8f0", fontSize: 13, outline: "none", boxSizing: "border-box",
+                fontFamily: "inherit",
+              }}
+            />
+          </div>
+
+          {error && (
+            <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 14, padding: "8px 12px", background: "#140808", border: "1px solid #3a1010", borderRadius: 8 }}>
+              {error}
+            </div>
+          )}
+
+          <button type="submit" style={{
+            width: "100%", padding: "11px 0", borderRadius: 10, border: "none",
+            background: "#6366f1", color: "white", fontSize: 13, fontWeight: 700,
+            cursor: "pointer", boxShadow: "0 4px 24px #6366f140", marginBottom: 12,
+          }}>
+            Sign in
+          </button>
+        </form>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+          <div style={{ flex: 1, height: 1, background: "#1e1e38" }} />
+          <span style={{ fontSize: 11, color: "#3d3d5c" }}>or</span>
+          <div style={{ flex: 1, height: 1, background: "#1e1e38" }} />
+        </div>
+
+        <button onClick={handleDemo} style={{
+          width: "100%", padding: "11px 0", borderRadius: 10,
+          background: "#0d0d1e", border: "1px solid #28285a", color: "#818cf8",
+          fontSize: 13, fontWeight: 600, cursor: "pointer",
+        }}>
+          Use demo account →
+        </button>
       </div>
+
+      <style>{`
+        input:focus { border-color: #6366f1 !important; }
+      `}</style>
     </div>
   );
 }
 
-function ClerkApp() {
-  const { isLoaded, isSignedIn } = useAuth();
+// ── App ──────────────────────────────────────────────────────────────────────
+
+export default function App() {
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem("chatcv_user");
+      return stored ? JSON.parse(stored) : null;
+    } catch { return null; }
+  });
+
+  const [view, setView] = useState(user ? "onboarding" : "landing");
+  const [userAgent, setUserAgent] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
 
-  if (!isLoaded) {
+  const login = (username, userData) => {
+    const token = makeToken(username);
+    localStorage.setItem("chatcv_token", token);
+    localStorage.setItem("chatcv_user", JSON.stringify(userData));
+    setUser(userData);
+    setView("onboarding");
+    setShowAuth(false);
+  };
+
+  const logout = () => {
+    localStorage.removeItem("chatcv_token");
+    localStorage.removeItem("chatcv_user");
+    setUser(null);
+    setUserAgent(null);
+    setView("landing");
+  };
+
+  const authValue = { user, login, logout };
+
+  // Unauthenticated
+  if (!user) {
     return (
-      <div style={{
-        background: "#07070f", minHeight: "100vh",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.5 }}>
-          <img src="/logo.svg" alt="" style={{ width: 28, height: 28 }} />
-          <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.5px", color: "#e2e8f0" }}>
-            Chat<span style={{ color: "#6366f1" }}>.cv</span>
-          </span>
-        </div>
-      </div>
+      <AuthContext.Provider value={authValue}>
+        <Landing onStart={() => setShowAuth(true)} />
+        {showAuth && <LoginModal onClose={() => setShowAuth(false)} onLogin={login} />}
+      </AuthContext.Provider>
     );
   }
 
-  if (isSignedIn) {
-    return <AuthenticatedApp />;
+  // Authenticated — onboarding
+  if (view === "onboarding" && !userAgent) {
+    return (
+      <AuthContext.Provider value={authValue}>
+        <Onboarding onComplete={(data) => { setUserAgent(data); setView("mesh"); }} />
+      </AuthContext.Provider>
+    );
   }
 
+  // Authenticated — mesh
   return (
-    <>
-      <Landing onStart={() => setShowAuth(true)} />
-      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
-    </>
+    <AuthContext.Provider value={authValue}>
+      <Mesh userAgent={userAgent} onUpdateAgent={setUserAgent} />
+    </AuthContext.Provider>
   );
-}
-
-function FallbackApp() {
-  const [view, setView] = useState("landing");
-  const [userAgent, setUserAgent] = useState(null);
-
-  if (view === "landing") {
-    return <Landing onStart={() => setView("onboarding")} />;
-  }
-  if (view === "onboarding") {
-    return <Onboarding onComplete={(data) => { setUserAgent(data); setView("mesh"); }} />;
-  }
-  return <Mesh userAgent={userAgent} onUpdateAgent={setUserAgent} />;
-}
-
-export default function App() {
-  if (!HAS_CLERK) return <FallbackApp />;
-  return <ClerkApp />;
 }

@@ -12,8 +12,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@clerk/backend": "^3.0.1",
-    "@clerk/react": "^6.0.1",
     "mammoth": "^1.11.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

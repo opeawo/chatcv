@@ -2,3 +2,9 @@ node_modules
 dist
 .env.local
 .vercel
+.DS_Store
+.claude/
+chatcv (1).jsx
+chatcv-onboarding (1).jsx
+chatcv-build-plan.md
+cvsamples/

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { INTENT_OPTIONS, GUARDRAILS_BY_INTENT, DEFAULT_LOOPS_BY_INTENT } from "./Onboarding";
 
-export default function Settings({ userAgent, onSave, onClose }) {
+export default function Settings({ userAgent, onSave, onClose, scoutPrefs, onUpdateScoutPrefs }) {
   const { profile, intent, guardrails } = userAgent;
 
   const [selectedIntent, setSelectedIntent] = useState(intent.intent);
@@ -9,6 +9,10 @@ export default function Settings({ userAgent, onSave, onClose }) {
   const [dealbreakers, setDealbreakers]    = useState(intent.dealbreakers || "");
   const [loops, setLoops]                  = useState(guardrails?.loops || []);
   const [visible, setVisible]              = useState(false);
+
+  // Scout preferences
+  const [scoutThreshold, setScoutThreshold] = useState(scoutPrefs?.threshold || 85);
+  const [scoutEnabled, setScoutEnabled]     = useState(scoutPrefs?.enabled !== false);
 
   // Slide-in animation on mount
   useEffect(() => { requestAnimationFrame(() => setVisible(true)); }, []);
@@ -28,6 +32,7 @@ export default function Settings({ userAgent, onSave, onClose }) {
       intent: { intent: selectedIntent, goals, dealbreakers },
       guardrails: { loops },
     });
+    onUpdateScoutPrefs?.({ threshold: scoutThreshold, enabled: scoutEnabled });
     handleClose();
   };
 
@@ -40,7 +45,9 @@ export default function Settings({ userAgent, onSave, onClose }) {
   const hasChanges = selectedIntent !== intent.intent
     || goals !== (intent.goals || "")
     || dealbreakers !== (intent.dealbreakers || "")
-    || JSON.stringify(loops) !== JSON.stringify(guardrails?.loops || []);
+    || JSON.stringify(loops) !== JSON.stringify(guardrails?.loops || [])
+    || scoutThreshold !== (scoutPrefs?.threshold || 85)
+    || scoutEnabled !== (scoutPrefs?.enabled !== false);
 
   return (
     <>
@@ -122,6 +129,53 @@ export default function Settings({ userAgent, onSave, onClose }) {
             />
           </div>
 
+          {/* JAY SCOUT */}
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ fontSize: 10, color: "#a78bfa", letterSpacing: "0.18em", fontWeight: 700, marginBottom: 12, fontFamily: "'DM Mono', monospace" }}>JAY SCOUT</div>
+
+            {/* Enable/disable toggle */}
+            <div
+              onClick={() => setScoutEnabled(e => !e)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, cursor: "pointer", transition: "all 0.15s",
+                background: scoutEnabled ? "#0f0a1e" : "#09091a",
+                border: `1px solid ${scoutEnabled ? "#a78bfa30" : "#141428"}`,
+                marginBottom: 14,
+              }}
+            >
+              <div style={{
+                width: 16, height: 16, borderRadius: 4, flexShrink: 0, transition: "all 0.15s",
+                background: scoutEnabled ? "#a78bfa" : "transparent",
+                border: `1.5px solid ${scoutEnabled ? "#a78bfa" : "#2d2d4a"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, color: "white", fontWeight: 700,
+              }}>
+                {scoutEnabled && "✓"}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: scoutEnabled ? "#e2e8f0" : "#5a607a" }}>Opportunity scanning</div>
+                <div style={{ fontSize: 10, color: "#3d3d5c", marginTop: 1 }}>{scoutEnabled ? "Jay Scout is active" : "Jay Scout is paused"}</div>
+              </div>
+            </div>
+
+            {/* Threshold slider */}
+            <div style={{ padding: "0 2px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 11, color: "#5a607a" }}>Confidence threshold</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa" }}>{scoutThreshold}%</span>
+              </div>
+              <input
+                type="range" min={60} max={99} value={scoutThreshold}
+                onChange={e => setScoutThreshold(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "#a78bfa" }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#2d2d4a", marginTop: 4 }}>
+                <span>More results (60%)</span>
+                <span>Higher precision (99%)</span>
+              </div>
+            </div>
+          </div>
+
           {/* GUARDRAILS */}
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 10, color: "#3d3d6a", letterSpacing: "0.18em", fontWeight: 700, marginBottom: 12, fontFamily: "'DM Mono', monospace" }}>GUARDRAILS</div>
@@ -177,6 +231,7 @@ export default function Settings({ userAgent, onSave, onClose }) {
 
       <style>{`
         textarea:focus { border-color: #6366f1 !important; }
+        input[type="range"]::-webkit-slider-thumb { cursor: pointer; }
       `}</style>
     </>
   );

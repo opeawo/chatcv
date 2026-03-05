@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { claude } from "./api";
 import Settings from "./Settings";
 import UserMenu from "./UserMenu";
+import { JAY_SCOUT, filterOpportunities, generateBriefing, MOCK_OPPORTUNITIES, OPP_TYPE_META } from "./jayScoutData";
 
 const AGENTS = [
   {
@@ -67,7 +68,7 @@ function now()  { return new Date().toLocaleTimeString("en", { hour12: false });
 export default function Mesh({ userAgent, onUpdateAgent }) {
   // Build agents list: replace demo a1 with onboarded user if provided
   const agents = useMemo(() => {
-    if (!userAgent) return AGENTS;
+    if (!userAgent) return [...AGENTS.slice(0, 1), JAY_SCOUT, ...AGENTS.slice(1)];
     const { profile, intent } = userAgent;
     return [
       {
@@ -83,6 +84,7 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
         dealbreakers: intent.dealbreakers.split(/[.;]/).map(s => s.trim()).filter(Boolean),
         isYou: true,
       },
+      JAY_SCOUT,
       ...AGENTS.filter(a => !a.isYou),
     ];
   }, [userAgent]);
@@ -98,6 +100,8 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
   const [log,         setLog]         = useState([]);
   const [paused,      setPaused]      = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [scoutPrefs, setScoutPrefs]   = useState({ threshold: 85, enabled: true });
+  const [oppActions,  setOppActions]   = useState({});
 
   const threadsRef  = useRef([]);
   const pausedRef   = useRef(false);
@@ -116,6 +120,34 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
   useEffect(() => {
     setTimeout(() => msgEnd.current?.scrollIntoView({ behavior: "smooth" }), 80);
   }, [threads, activeId]);
+
+  // ── Jay Scout: create scout thread on mount ────────────────────────────────
+  const scoutInitRef = useRef(false);
+  useEffect(() => {
+    if (scoutInitRef.current) return;
+    scoutInitRef.current = true;
+    const myId = agents.find(a => a.isYou)?.id || "a1";
+    const filtered = filterOpportunities(MOCK_OPPORTUNITIES, scoutPrefs.threshold);
+    const briefing = generateBriefing(filtered, MOCK_OPPORTUNITIES.length, 12, 8);
+    setThreads(ts => {
+      if (ts.find(t => t.id === "t-scout")) return ts;
+      return [{
+        id: "t-scout", a: myId, b: "jay-scout",
+        messages: [{
+          id: "m-scout-briefing-1",
+          speaker: "jay-scout",
+          text: JSON.stringify(briefing),
+          streaming: false,
+          ts: Date.now(),
+        }],
+        status: "live",
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      }, ...ts];
+    });
+    setActiveId("t-scout");
+    setTimeout(() => addLog("Jay Scout posted a new briefing", "scout"), 300);
+  }, [agents, scoutPrefs.threshold, addLog]);
 
   const setAgentAction = useCallback((id, thinking, action) => {
     setAgentStates(s => ({ ...s, [id]: { thinking, action: action || s[id]?.action } }));
@@ -317,10 +349,10 @@ Write a crisp opening message: who you represent and exactly why you're reaching
     }
   }, [agents, byId, pushMsg, resolveMsg, setAgentAction, addLog, generateReply]);
 
-  // ── staggered scheduler ──────────────────────────────────────────────────
+  // ── staggered scheduler (excludes Jay Scout) ────────────────────────────
   useEffect(() => {
     const timers = [];
-    agents.forEach((agent, i) => {
+    agents.filter(a => !a.isScout).forEach((agent, i) => {
       const schedule = () => {
         if (!pausedRef.current) agentCycle(agent);
         timers[i] = setTimeout(schedule, THINK_INTERVAL + Math.random() * 4000 + i * 600);
@@ -352,6 +384,45 @@ Write a crisp opening message: who you represent and exactly why you're reaching
   const concluded    = myThreads.filter(t => t.status === "concluded").length;
   const todayStart   = useMemo(() => new Date().setHours(0, 0, 0, 0), []);
   const connectionsToday = threads.filter(t => t.a === myId && t.startedAt >= todayStart).length;
+
+  // ── Jay Scout helpers ──────────────────────────────────────────────────────
+  const filteredOpps = useMemo(() => filterOpportunities(MOCK_OPPORTUNITIES, scoutPrefs.threshold), [scoutPrefs.threshold]);
+
+  function parseScoutMessage(text) {
+    try { const d = JSON.parse(text); return d.type?.startsWith("scout_") ? d : null; }
+    catch { return null; }
+  }
+
+  function messagePreview(text) {
+    const d = parseScoutMessage(text);
+    if (d?.type === "scout_briefing") return `${d.opportunities.length} opportunities found`;
+    if (d?.type === "scout_detail") return d.detail?.slice(0, 60) + "…";
+    return text;
+  }
+
+  const handleOppAction = useCallback((oppId, action) => {
+    setOppActions(prev => ({ ...prev, [oppId]: action }));
+    const opp = MOCK_OPPORTUNITIES.find(o => o.id === oppId);
+    if (action === "interested") {
+      addLog(`Jay Scout: expanding on ${opp?.title} at ${opp?.company}`, "scout");
+      pushMsg("t-scout", "jay-scout", JSON.stringify({
+        type: "scout_detail",
+        oppId,
+        detail: `Here's a deeper look at the ${opp?.title} role at ${opp?.company}:\n\n• Role level aligns with your Staff/Principal target — this is a senior IC position leading fraud ML initiatives.\n• Tech stack: PyTorch, distributed training, real-time inference pipelines — overlaps heavily with your Flutterwave work.\n• Team: 8-person ML team, reporting to VP Engineering.\n• Why I flagged it: Your $2B txn/yr fraud detection precision (99.7%) is directly relevant to their core challenge.\n\nWant me to have your agent reach out to their recruiter, or save this for later?`,
+      }));
+    } else if (action === "reach_out") {
+      addLog(`Jay Scout: initiating outreach for ${opp?.title} at ${opp?.company}`, "scout");
+      pushMsg("t-scout", "jay-scout", JSON.stringify({
+        type: "scout_detail",
+        oppId,
+        detail: `Got it — I'll have your agent draft an introduction to ${opp?.company}'s hiring team, highlighting your fraud detection background and production ML experience. You'll see a new thread when it's ready for review.`,
+      }));
+    } else if (action === "dismissed") {
+      addLog(`Jay Scout: dismissed ${opp?.title} at ${opp?.company}`, "scout");
+    }
+  }, [addLog, pushMsg]);
+
+  const isScoutThread = activeThread?.a === "jay-scout" || activeThread?.b === "jay-scout";
 
   return (
     <div style={{ fontFamily: "'Instrument Sans',-apple-system,sans-serif", background: "#07070f", height: "100vh", color: "#e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -407,6 +478,50 @@ Write a crisp opening message: who you represent and exactly why you're reaching
             const sm   = STATUS_META[agent.status] || { label: agent.status, color: "#6366f1" };
             const myT  = threads.filter(t => t.a === agent.id || t.b === agent.id).length;
             const hasDec = Object.values(decisions).some(d => d.agentId === agent.id);
+
+            {/* Jay Scout card */}
+            if (agent.isScout) {
+              const scoutThread = threads.find(t => t.b === "jay-scout" || t.a === "jay-scout");
+              const oppCount = filteredOpps.length;
+              return (
+                <div key={agent.id}
+                  onClick={() => scoutThread && setActiveId(scoutThread.id)}
+                  style={{
+                    marginBottom: 10, padding: 12, borderRadius: 10, cursor: "pointer",
+                    background: activeId === "t-scout" ? "#130e24" : "#0f0a1e",
+                    border: `1px solid ${activeId === "t-scout" ? "#a78bfa40" : "#2a1e4a"}`,
+                    position: "relative", transition: "all 0.15s",
+                  }}
+                >
+                  <div style={{ position: "absolute", top: 9, right: 9, width: 6, height: 6, borderRadius: "50%", background: "#a78bfa", animation: scoutPrefs.enabled ? "pulse 3s infinite" : "none", opacity: scoutPrefs.enabled ? 1 : 0.3 }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
+                    <div style={{
+                      width: 34, height: 34, borderRadius: "50%",
+                      background: "linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 16, fontWeight: 400, position: "relative", flexShrink: 0,
+                      boxShadow: "0 0 12px #a78bfa25",
+                    }}>
+                      ◎
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+                        Jay Scout <span style={{ color: "#a78bfa", fontSize: 9 }}>SCOUT</span>
+                      </div>
+                      <div style={{ fontSize: 9, color: "#5a4a80" }}>Opportunity Radar</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 9, color: "#a78bfa", fontWeight: 600, marginBottom: 5 }}>
+                    {oppCount > 0 ? `${oppCount} opportunit${oppCount === 1 ? "y" : "ies"} found` : "Scanning…"}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#3a2a5c", lineHeight: 1.4 }}>
+                    {scoutPrefs.enabled ? "Active · threshold " + scoutPrefs.threshold + "%" : "Paused"}
+                  </div>
+                </div>
+              );
+            }
+
+            {/* Regular agent card */}
             return (
               <div key={agent.id} style={{ marginBottom: 10, padding: 12, background: "#0d0d1c", borderRadius: 10, border: hasDec ? "1px solid #4a1515" : agent.isYou ? "1px solid #28285a" : "1px solid #101020", position: "relative" }}>
                 {st?.thinking && <div style={{ position: "absolute", top: 9, right: 9, width: 6, height: 6, borderRadius: "50%", background: agent.color, animation: "pulse 0.7s infinite" }} />}
@@ -446,12 +561,46 @@ Write a crisp opening message: who you represent and exactly why you're reaching
               </div>
             </div>
           )}
-          {[...myThreads].sort((a, b) => b.updatedAt - a.updatedAt).map(thread => {
+          {[...myThreads].sort((a, b) => {
+            const aScout = a.a === "jay-scout" || a.b === "jay-scout";
+            const bScout = b.a === "jay-scout" || b.b === "jay-scout";
+            if (aScout && !bScout) return -1;
+            if (!aScout && bScout) return 1;
+            return b.updatedAt - a.updatedAt;
+          }).map(thread => {
             const a = byId(thread.a), b = byId(thread.b);
             const last = [...thread.messages].reverse().find(m => m.text);
             const isLive = activeId === thread.id;
             const hasDec = !!decisions[thread.id];
             const isStreaming = thread.messages.some(m => m.streaming && !m.text);
+            const threadIsScout = thread.a === "jay-scout" || thread.b === "jay-scout";
+
+            {/* Scout thread item */}
+            if (threadIsScout) {
+              return (
+                <div key={thread.id} onClick={() => setActiveId(thread.id)}
+                  style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #0d0d18", background: isLive ? "#0e0a1e" : "transparent", borderLeft: `2px solid ${isLive ? "#a78bfa" : "transparent"}`, transition: "background 0.15s" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
+                    <div style={{
+                      width: 22, height: 22, borderRadius: "50%",
+                      background: "linear-gradient(135deg, #a78bfa, #7c3aed)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 11, fontWeight: 400,
+                    }}>◎</div>
+                    <span style={{ fontSize: 12, fontWeight: 600, flex: 1, color: "#c4b5fd" }}>Jay Scout</span>
+                    <span style={{ fontSize: 9, color: "#a78bfa", fontWeight: 600 }}>{filteredOpps.length}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: isLive ? "#7c6aab" : "#3a2a5c", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", lineHeight: 1.55 }}>
+                    {last ? messagePreview(last.text) : <span style={{ fontStyle: "italic", color: "#1e1e30" }}>Scanning…</span>}
+                  </div>
+                  <div style={{ fontSize: 9, color: "#1a1a28", marginTop: 4 }}>
+                    {thread.messages.filter(m => m.text).length} updates · live
+                  </div>
+                </div>
+              );
+            }
+
+            {/* Regular thread item */}
             return (
               <div key={thread.id} onClick={() => setActiveId(thread.id)}
                 style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #0d0d18", background: isLive ? "#0f0f20" : "transparent", borderLeft: `2px solid ${hasDec ? "#ef4444" : isLive ? "#6366f1" : "transparent"}`, transition: "background 0.15s" }}>
@@ -483,7 +632,7 @@ Write a crisp opening message: who you represent and exactly why you're reaching
           {!activeThread ? (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 14 }}>
               <div style={{ display: "flex", gap: 8 }}>
-                {agents.slice(0, 4).map((a, i) => (
+                {agents.filter(a => !a.isScout).slice(0, 4).map((a, i) => (
                   <div key={a.id} style={{ width: 30, height: 30, borderRadius: "50%", background: a.color, opacity: 0.1 + i * 0.04 }} />
                 ))}
               </div>
@@ -496,27 +645,50 @@ Write a crisp opening message: who you represent and exactly why you're reaching
             </div>
           ) : (
             <>
-              <div style={{ padding: "10px 20px", borderBottom: "1px solid #0f0f1e", display: "flex", alignItems: "center", gap: 0, flexShrink: 0, background: "#09090f" }}>
-                {[activeThread.a, activeThread.b].map((id, i) => {
-                  const ag = byId(id);
-                  return (
-                    <div key={id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {i > 0 && <span style={{ fontSize: 13, color: "#252545", margin: "0 12px" }}>↔</span>}
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: ag?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700 }}>{ag?.avatar}</div>
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3 }}>{ag?.name}</div>
-                        <div style={{ fontSize: 9, color: "#3d3d5c" }}>{ag?.title} · {ag?.company}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-                <div style={{ flex: 1 }} />
-                <div style={{ fontSize: 9, color: activeThread.status === "concluded" ? "#10b981" : "#2a2a45", background: "#0e0e1c", border: `1px solid ${activeThread.status === "concluded" ? "#0a2a1a" : "#181830"}`, padding: "3px 9px", borderRadius: 4 }}>
-                  {activeThread.status === "concluded" ? "✓ Concluded" : "Agent-to-Agent · No humans"}
+              {/* Thread header */}
+              {isScoutThread ? (
+                <div style={{ padding: "10px 20px", borderBottom: "1px solid #1a1030", display: "flex", alignItems: "center", gap: 10, flexShrink: 0, background: "#0a0814" }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%",
+                    background: "linear-gradient(135deg, #a78bfa, #7c3aed)",
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14,
+                  }}>◎</div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600 }}>Jay Scout</div>
+                    <div style={{ fontSize: 9, color: "#5a4a80" }}>Opportunity Radar · Threshold: {scoutPrefs.threshold}%</div>
+                  </div>
+                  <div style={{ flex: 1 }} />
+                  <button
+                    onClick={() => setShowSettings(true)}
+                    style={{ background: "#0e0e1c", border: "1px solid #2a1e4a", color: "#a78bfa", padding: "4px 12px", borderRadius: 6, cursor: "pointer", fontSize: 10, fontWeight: 600, transition: "all 0.15s" }}
+                    onMouseEnter={e => { e.target.style.background = "#1a1030"; }}
+                    onMouseLeave={e => { e.target.style.background = "#0e0e1c"; }}
+                  >Preferences</button>
                 </div>
-              </div>
+              ) : (
+                <div style={{ padding: "10px 20px", borderBottom: "1px solid #0f0f1e", display: "flex", alignItems: "center", gap: 0, flexShrink: 0, background: "#09090f" }}>
+                  {[activeThread.a, activeThread.b].map((id, i) => {
+                    const ag = byId(id);
+                    return (
+                      <div key={id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {i > 0 && <span style={{ fontSize: 13, color: "#252545", margin: "0 12px" }}>↔</span>}
+                        <div style={{ width: 28, height: 28, borderRadius: "50%", background: ag?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700 }}>{ag?.avatar}</div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3 }}>{ag?.name}</div>
+                          <div style={{ fontSize: 9, color: "#3d3d5c" }}>{ag?.title} · {ag?.company}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{ flex: 1 }} />
+                  <div style={{ fontSize: 9, color: activeThread.status === "concluded" ? "#10b981" : "#2a2a45", background: "#0e0e1c", border: `1px solid ${activeThread.status === "concluded" ? "#0a2a1a" : "#181830"}`, padding: "3px 9px", borderRadius: 4 }}>
+                    {activeThread.status === "concluded" ? "✓ Concluded" : "Agent-to-Agent · No humans"}
+                  </div>
+                </div>
+              )}
 
-              {decisions[activeThread.id] && (
+              {/* Human decision prompt (non-scout threads only) */}
+              {!isScoutThread && decisions[activeThread.id] && (
                 <div style={{ background: "#110707", borderBottom: "1px solid #3a1010", padding: "12px 20px", flexShrink: 0 }}>
                   <div style={{ fontSize: 11, color: "#f87171", fontWeight: 700, marginBottom: 6 }}>⚡ Your agent needs a decision from you</div>
                   <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 10, lineHeight: 1.6 }}>{decisions[activeThread.id].need}</div>
@@ -527,11 +699,140 @@ Write a crisp opening message: who you represent and exactly why you're reaching
                 </div>
               )}
 
+              {/* Messages area */}
               <div style={{ flex: 1, overflowY: "auto", padding: "22px 22px 10px" }}>
                 {activeThread.messages.map(msg => {
                   const ag = byId(msg.speaker);
-                  const isRight = msg.speaker === activeThread.b;
+                  const isRight = msg.speaker === activeThread.b && !isScoutThread;
                   const empty   = msg.streaming && !msg.text;
+                  const scoutData = msg.speaker === "jay-scout" && !empty ? parseScoutMessage(msg.text) : null;
+
+                  {/* ── Scout briefing message ── */}
+                  if (scoutData?.type === "scout_briefing") {
+                    return (
+                      <div key={msg.id} style={{ marginBottom: 24 }}>
+                        {/* Header */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                          <div style={{
+                            width: 32, height: 32, borderRadius: "50%",
+                            background: "linear-gradient(135deg, #a78bfa, #7c3aed)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 16, flexShrink: 0, boxShadow: "0 0 10px #a78bfa25",
+                          }}>◎</div>
+                          <div style={{ fontSize: 9, color: "#5a4a80" }}>
+                            <span style={{ color: "#a78bfa", fontWeight: 600 }}>Jay Scout</span>
+                            <span style={{ color: "#1e1e30", marginLeft: 8 }}>{new Date(msg.ts).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
+                          </div>
+                        </div>
+
+                        {/* Briefing bubble — full width */}
+                        <div style={{ background: "#0c0818", border: "1px solid #1e1438", borderRadius: "3px 14px 14px 14px", padding: "16px 20px" }}>
+                          {/* Summary */}
+                          <div style={{ fontSize: 13, color: "#c4b5fd", lineHeight: 1.7, marginBottom: 16 }}>
+                            {scoutData.summary}
+                          </div>
+
+                          {/* Opportunity cards */}
+                          {scoutData.opportunities.map(opp => {
+                            const action = oppActions[opp.id];
+                            const matchColor = opp.matchScore >= 90 ? "#10b981" : opp.matchScore >= 80 ? "#f59e0b" : "#a78bfa";
+                            const typeMeta = OPP_TYPE_META[opp.type] || { icon: "◈", label: opp.type };
+                            return (
+                              <div key={opp.id} style={{
+                                background: action === "dismissed" ? "#08060f" : "#0a0a1a",
+                                border: `1px solid ${action === "dismissed" ? "#0e0c16" : matchColor + "25"}`,
+                                borderRadius: 10, padding: "14px 16px", marginBottom: 12,
+                                opacity: action === "dismissed" ? 0.5 : 1,
+                                transition: "all 0.3s",
+                              }}>
+                                {/* Match badge + type */}
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: matchColor }} />
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: matchColor }}>{opp.matchScore}% match</span>
+                                  <span style={{ fontSize: 9, color: "#3d3d5c", marginLeft: "auto" }}>{typeMeta.icon} {typeMeta.label}</span>
+                                </div>
+                                {/* Title + Company */}
+                                <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>
+                                  {opp.title} — {opp.company}
+                                </div>
+                                {/* Match reason */}
+                                <div style={{ fontSize: 11, color: "#8892b0", fontStyle: "italic", marginBottom: 8, lineHeight: 1.5 }}>
+                                  "{opp.summary}"
+                                </div>
+                                {/* Meta */}
+                                <div style={{ fontSize: 10, color: "#4b5578", marginBottom: 10 }}>
+                                  {opp.location}{opp.compRange && ` · ${opp.compRange}`}
+                                </div>
+                                {/* Source */}
+                                <div style={{ fontSize: 10, color: "#3d3d5c", marginBottom: 12 }}>
+                                  Source: <span style={{ color: "#6366f1" }}>{opp.source}</span>
+                                </div>
+                                {/* Actions */}
+                                {!action ? (
+                                  <div style={{ display: "flex", gap: 6 }}>
+                                    <button onClick={() => handleOppAction(opp.id, "interested")}
+                                      style={{ background: "#12122e", border: "1px solid #28285a", color: "#a78bfa", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                                      Tell me more
+                                    </button>
+                                    <button onClick={() => handleOppAction(opp.id, "dismissed")}
+                                      style={{ background: "transparent", border: "1px solid #1e1e30", color: "#4b5578", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 11 }}>
+                                      Not for me
+                                    </button>
+                                    <button onClick={() => handleOppAction(opp.id, "reach_out")}
+                                      title="Have my agent reach out"
+                                      style={{ background: "#a78bfa", border: "none", color: "white", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 700, marginLeft: "auto" }}>
+                                      →
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 11, fontWeight: 600, color: action === "dismissed" ? "#4b5578" : action === "reach_out" ? "#10b981" : "#a78bfa" }}>
+                                    {action === "interested" && "⟡ Preparing more details…"}
+                                    {action === "dismissed" && "Noted — won't show similar"}
+                                    {action === "reach_out" && "✓ Agent reaching out…"}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {/* Footer */}
+                          <div style={{ fontSize: 11, color: "#3a2a5c", marginTop: 8, lineHeight: 1.6 }}>
+                            {scoutData.footer.replace(" →", "")}
+                            {" "}
+                            <span
+                              onClick={() => setShowSettings(true)}
+                              style={{ color: "#a78bfa", cursor: "pointer", borderBottom: "1px solid #a78bfa40" }}
+                            >Adjust what I look for →</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  {/* ── Scout detail follow-up message ── */}
+                  if (scoutData?.type === "scout_detail") {
+                    return (
+                      <div key={msg.id} style={{ marginBottom: 24 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                          <div style={{
+                            width: 32, height: 32, borderRadius: "50%",
+                            background: "linear-gradient(135deg, #a78bfa, #7c3aed)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 16, flexShrink: 0, boxShadow: "0 0 10px #a78bfa25",
+                          }}>◎</div>
+                          <div style={{ fontSize: 9, color: "#5a4a80" }}>
+                            <span style={{ color: "#a78bfa", fontWeight: 600 }}>Jay Scout</span>
+                            <span style={{ color: "#1e1e30", marginLeft: 8 }}>{new Date(msg.ts).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
+                          </div>
+                        </div>
+                        <div style={{ background: "#0c0818", border: "1px solid #1e1438", borderRadius: "3px 14px 14px 14px", padding: "14px 18px", fontSize: 13, lineHeight: 1.75, color: "#c8d4e0", whiteSpace: "pre-line" }}>
+                          {scoutData.detail}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  {/* ── Regular agent message ── */}
                   return (
                     <div key={msg.id} style={{ display: "flex", gap: 10, marginBottom: 20, flexDirection: isRight ? "row-reverse" : "row", alignItems: "flex-start" }}>
                       <div style={{ width: 32, height: 32, borderRadius: "50%", background: ag?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0, boxShadow: `0 0 10px ${ag?.color}25` }}>
@@ -552,14 +853,24 @@ Write a crisp opening message: who you represent and exactly why you're reaching
                 <div ref={msgEnd} />
               </div>
 
-              <div style={{ padding: "10px 20px 14px", borderTop: "1px solid #0f0f1e", flexShrink: 0 }}>
-                <div style={{ background: "#0d0d18", border: "1px solid #141428", borderRadius: 8, padding: "9px 14px", fontSize: 11, color: "#252545", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: activeThread.status === "concluded" ? "#10b981" : "#6366f1", display: "inline-block", animation: activeThread.status === "concluded" ? "none" : "pulse 2s infinite" }} />
-                  {activeThread.status === "concluded"
-                    ? "Agents concluded this conversation autonomously"
-                    : "Agents are handling this — your input is not needed"}
+              {/* Bottom bar */}
+              {isScoutThread ? (
+                <div style={{ padding: "10px 20px 14px", borderTop: "1px solid #1a1030", flexShrink: 0 }}>
+                  <div style={{ background: "#0c0818", border: "1px solid #1e1438", borderRadius: 8, padding: "9px 14px", fontSize: 11, color: "#5a4a80", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a78bfa", display: "inline-block", animation: "pulse 3s infinite" }} />
+                    Jay Scout runs in the background. Next scan in ~2h.
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div style={{ padding: "10px 20px 14px", borderTop: "1px solid #0f0f1e", flexShrink: 0 }}>
+                  <div style={{ background: "#0d0d18", border: "1px solid #141428", borderRadius: 8, padding: "9px 14px", fontSize: 11, color: "#252545", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: activeThread.status === "concluded" ? "#10b981" : "#6366f1", display: "inline-block", animation: activeThread.status === "concluded" ? "none" : "pulse 2s infinite" }} />
+                    {activeThread.status === "concluded"
+                      ? "Agents concluded this conversation autonomously"
+                      : "Agents are handling this — your input is not needed"}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -570,9 +881,9 @@ Write a crisp opening message: who you represent and exactly why you're reaching
           <div ref={logRef} style={{ flex: 1, overflowY: "auto", padding: 10 }}>
             {log.length === 0 && <div style={{ fontSize: 10, color: "#1a1a2e", fontStyle: "italic" }}>Agents initialising…</div>}
             {log.map(l => (
-              <div key={l.id} style={{ marginBottom: 8, paddingLeft: 7, borderLeft: `2px solid ${l.type === "error" ? "#ef444430" : l.type === "connect" ? "#6366f140" : l.type === "msg" ? "#10b98130" : l.type === "human" ? "#ef444455" : l.type === "conclude" ? "#10b98145" : "#1e1e30"}` }}>
+              <div key={l.id} style={{ marginBottom: 8, paddingLeft: 7, borderLeft: `2px solid ${l.type === "error" ? "#ef444430" : l.type === "connect" ? "#6366f140" : l.type === "msg" ? "#10b98130" : l.type === "human" ? "#ef444455" : l.type === "conclude" ? "#10b98145" : l.type === "scout" ? "#a78bfa40" : "#1e1e30"}` }}>
                 <div style={{ fontSize: 9, color: "#252540" }}>{l.t}</div>
-                <div style={{ fontSize: 10, lineHeight: 1.45, color: l.type === "error" ? "#f87171" : l.type === "connect" ? "#818cf8" : l.type === "msg" ? "#34d399" : l.type === "human" ? "#fca5a5" : l.type === "conclude" ? "#6ee7b7" : "#3d3d5c" }}>
+                <div style={{ fontSize: 10, lineHeight: 1.45, color: l.type === "error" ? "#f87171" : l.type === "connect" ? "#818cf8" : l.type === "msg" ? "#34d399" : l.type === "human" ? "#fca5a5" : l.type === "conclude" ? "#6ee7b7" : l.type === "scout" ? "#c4b5fd" : "#3d3d5c" }}>
                   {l.msg}
                 </div>
               </div>
@@ -586,10 +897,11 @@ Write a crisp opening message: who you represent and exactly why you're reaching
               ["Total messages",  totalMsgs],
               ["Human loops",     pendingCount],
               ["Autonomous ops",  Math.max(0, totalMsgs - pendingCount)],
+              ["Opportunities",   filteredOpps.length],
             ].map(([k, v]) => (
               <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
                 <span style={{ fontSize: 10, color: "#2d2d4a" }}>{k}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: k === "Human loops" ? (v > 0 ? "#f87171" : "#2d2d4a") : "#6366f1" }}>{v}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: k === "Human loops" ? (v > 0 ? "#f87171" : "#2d2d4a") : k === "Opportunities" ? "#a78bfa" : "#6366f1" }}>{v}</span>
               </div>
             ))}
           </div>
@@ -601,6 +913,8 @@ Write a crisp opening message: who you represent and exactly why you're reaching
           userAgent={userAgent}
           onSave={onUpdateAgent}
           onClose={() => setShowSettings(false)}
+          scoutPrefs={scoutPrefs}
+          onUpdateScoutPrefs={setScoutPrefs}
         />
       )}
 
