@@ -12,11 +12,10 @@ function AuthenticatedApp() {
   const [view, setView] = useState("onboarding"); // "onboarding" | "mesh"
   const [userAgent, setUserAgent] = useState(null);
 
-  useEffect(() => {
-    if (getToken) {
-      setAuthTokenGetter(() => getToken());
-    }
-  }, [getToken]);
+  // Set immediately during render (not in useEffect) so child component
+  // effects that call claude() already have a valid token getter.
+  // getToken is a stable Clerk function, so this is safe on every render.
+  setAuthTokenGetter(() => getToken());
 
   if (view === "onboarding" && !userAgent) {
     return (
