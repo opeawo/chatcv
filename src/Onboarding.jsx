@@ -199,38 +199,19 @@ function StepDrop({ onNext }) {
         </div>
       )}
 
-      <button
-        onClick={() => onNext({ rawText: "DEMO_MODE", source: "demo" })}
-        style={{ background: "transparent", border: "none", color: "#252545", cursor: "pointer", fontSize: 11, textDecoration: "underline" }}>
-        Use demo profile instead
-      </button>
     </div>
   );
 }
 
-function StepExtract({ input, onNext }) {
+function StepExtract({ input, onNext, onRetry }) {
   const [profile, setProfile]   = useState(null);
   const [loading, setLoading]   = useState(true);
   const [editing, setEditing]   = useState(null); // field key
   const [editVal, setEditVal]   = useState("");
   const [phase,   setPhase]     = useState("reading"); // reading | proposing | done
-
-  const DEMO = {
-    name: "Tunde Adeyemi",
-    title: "Senior ML Engineer",
-    company: "Flutterwave",
-    years: "5",
-    summary: "5 years building production AI/ML systems for African fintech. Built fraud detection at $2B txn/yr, 99.7% precision. Expert in PyTorch, LLMs, MLOps, distributed systems.",
-    skills: ["PyTorch", "LLMs", "MLOps", "Python", "Distributed Systems", "Fraud Detection"],
-    highlights: ["Built fraud detection system processing $2B annual transactions", "99.7% precision on real-time transaction scoring", "Led ML platform team of 4 engineers"],
-  };
+  const [error,   setError]     = useState(null);
 
   useEffect(() => {
-    if (input.rawText === "DEMO_MODE") {
-      setTimeout(() => { setPhase("proposing"); }, 800);
-      setTimeout(() => { setProfile(DEMO); setPhase("done"); setLoading(false); }, 1800);
-      return;
-    }
     const extract = async () => {
       try {
         setPhase("reading");
@@ -275,9 +256,8 @@ Return ONLY valid JSON, no markdown, no explanation.`,
         }
         setPhase("done");
         setLoading(false);
-      } catch {
-        setProfile(DEMO);
-        setPhase("done");
+      } catch (err) {
+        setError(err.message || "Failed to extract profile. Please try again.");
         setLoading(false);
       }
     };
@@ -295,6 +275,20 @@ Return ONLY valid JSON, no markdown, no explanation.`,
     }));
     setEditing(null);
   };
+
+  if (error) return (
+    <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 20, maxWidth: 420 }}>
+      <div style={{ fontSize: 11, color: "#3d3d6a", letterSpacing: "0.2em", fontFamily: "'DM Mono', monospace" }}>STEP 2 OF 4 &nbsp;·&nbsp; ERROR</div>
+      <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#1a0808", border: "1px solid #4a1515", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>!</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: "#f87171" }}>Extraction failed</div>
+      <div style={{ fontSize: 13, color: "#4b5578", lineHeight: 1.7 }}>{error}</div>
+      <button
+        onClick={onRetry}
+        style={{ background: "#6366f1", border: "none", color: "white", padding: "12px 28px", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 700, marginTop: 8 }}>
+        ← Try again
+      </button>
+    </div>
+  );
 
   if (loading) return (
     <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
@@ -882,7 +876,7 @@ export default function Onboarding({ onComplete }) {
       {/* Body */}
       <div style={{ flex: 1, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "60px 24px 80px", overflowY: "auto" }}>
         {step === 0 && <StepDrop onNext={(data) => { setRawInput(data); setStep(1); }} />}
-        {step === 1 && <StepExtract input={rawInput} onNext={(p) => { setProfile(p); setStep(2); }} />}
+        {step === 1 && <StepExtract input={rawInput} onNext={(p) => { setProfile(p); setStep(2); }} onRetry={() => { setRawInput(null); setStep(0); }} />}
         {step === 2 && <StepIntent profile={profile} onNext={(i) => { setIntent(i); setStep(3); }} />}
         {step === 3 && <StepGuardrails profile={profile} intent={intent} onNext={(g) => { setGuardrails(g); setStep(4); }} />}
         {step === 4 && <StepActivate profile={profile} intent={intent} guardrails={guardrails} onComplete={onComplete} />}
