@@ -14,7 +14,7 @@ function apiProxyPlugin() {
 
         let body = "";
         for await (const chunk of req) body += chunk;
-        const { system, user, maxTokens = 220 } = JSON.parse(body);
+        const { system, user, maxTokens = 220, tools } = JSON.parse(body);
 
         if (!system || !user) {
           res.statusCode = 400;
@@ -30,6 +30,14 @@ function apiProxyPlugin() {
         }
 
         try {
+          const apiBody = {
+            model: "claude-sonnet-4-20250514",
+            max_tokens: maxTokens,
+            system,
+            messages: [{ role: "user", content: user }],
+          };
+          if (tools) apiBody.tools = tools;
+
           const response = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: {
@@ -38,12 +46,7 @@ function apiProxyPlugin() {
               "anthropic-version": "2023-06-01",
               "anthropic-beta": "pdfs-2024-09-25",
             },
-            body: JSON.stringify({
-              model: "claude-sonnet-4-20250514",
-              max_tokens: maxTokens,
-              system,
-              messages: [{ role: "user", content: user }],
-            }),
+            body: JSON.stringify(apiBody),
           });
 
           const data = await response.text();

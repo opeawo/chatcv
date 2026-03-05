@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { claude } from "./api";
+import mammoth from "mammoth";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const LOOP_OPTIONS = [
@@ -75,6 +76,12 @@ function StepDrop({ onNext }) {
         onNext({ pdfBase64: btoa(binary), source: "pdf" });
       };
       reader.readAsArrayBuffer(file);
+    } else if (file.name.endsWith(".docx") || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      reader.onload = async (e) => {
+        const result = await mammoth.extractRawText({ arrayBuffer: e.target.result });
+        onNext({ rawText: result.value, source: "docx" });
+      };
+      reader.readAsArrayBuffer(file);
     } else {
       reader.onload = (e) => { onNext({ rawText: e.target.result, source: "txt" }); };
       reader.readAsText(file);
@@ -92,7 +99,7 @@ function StepDrop({ onNext }) {
     if (!pasted.trim()) return;
     setLoading(true);
     await new Promise(r => setTimeout(r, 400));
-    onNext({ rawText: `LinkedIn URL: ${pasted}`, source: "linkedin" });
+    onNext({ linkedinUrl: pasted.trim(), source: "linkedin" });
   };
 
   return (
@@ -186,28 +193,46 @@ function StepExtract({ input, onNext }) {
         setPhase("reading");
         await new Promise(r => setTimeout(r, 600));
         setPhase("proposing");
-        const extractPrompt = `Extract a professional profile from this resume/CV. Return JSON with these exact keys:
+        const extractPrompt = `Extract a professional profile. Return ONLY valid JSON with these exact keys:
 {
   "name": "full name",
   "title": "current job title",
   "company": "current employer",
-  "years": "years of experience as string",
+  "years": "years of experience as a number string e.g. '5' or '15+'",
   "summary": "2-3 sentence professional summary",
   "skills": ["skill1", "skill2", ...up to 8],
   "highlights": ["achievement1", "achievement2", ...up to 5]
 }`;
-        const userContent = input.pdfBase64
-          ? [
+        let raw;
+        if (input.linkedinUrl) {
+          // Use web search to research the LinkedIn profile
+          raw = await claude(
+            `You are an AI that extracts structured professional profile data from LinkedIn profiles.
+Search the web for this person's professional information. Return ONLY valid JSON, no markdown, no explanation.`,
+            `Search the web for the person at this LinkedIn URL: ${input.linkedinUrl}
+Find their name, current role, company, past roles, skills, and achievements.
+Then return the result as JSON.\n\n${extractPrompt}`,
+            1024,
+            [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }]
+          );
+        } else if (input.pdfBase64) {
+          raw = await claude(
+            `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
+Return ONLY valid JSON, no markdown, no explanation.`,
+            [
               { type: "document", source: { type: "base64", media_type: "application/pdf", data: input.pdfBase64 } },
               { type: "text", text: extractPrompt },
-            ]
-          : `${extractPrompt}\n\nTEXT:\n${input.rawText.slice(0, 3000)}`;
-        const raw = await claude(
-          `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
+            ],
+            1024
+          );
+        } else {
+          raw = await claude(
+            `You are an AI that extracts structured professional profile data from CV text or LinkedIn profiles.
 Return ONLY valid JSON, no markdown, no explanation.`,
-          userContent,
-          1024
-        );
+            `${extractPrompt}\n\nTEXT:\n${input.rawText.slice(0, 3000)}`,
+            1024
+          );
+        }
         const clean = raw.replace(/```json|```/g, "").trim();
         setProfile(JSON.parse(clean));
         setPhase("done");
@@ -285,7 +310,7 @@ Return ONLY valid JSON, no markdown, no explanation.`,
             )}
           </div>
           <div style={{ fontSize: 11, color: "#3d3d6a", background: "#0e0e1c", border: "1px solid #1a1a30", padding: "4px 10px", borderRadius: 20 }}>
-            {profile.years}y exp
+            {profile.years.replace(/\s*years?\s*/i, "")}y exp
           </div>
         </div>
 
