@@ -7,19 +7,25 @@ import MeshPage from "./pages/MeshPage";
 
 function RequireAuth({ children }) {
   const { user } = useAuthContext();
-  if (!user && !import.meta.env.DEV) return <Navigate to="/" replace />;
+  if (!user) return <Navigate to="/" replace />;
   return children;
 }
 
 function RequireOnboarded({ children }) {
   const { userAgent } = useUserAgent();
-  if (!userAgent && !import.meta.env.DEV) return <Navigate to="/onboarding" replace />;
+  if (!userAgent) return <Navigate to="/onboarding" replace />;
   return children;
 }
 
 function RedirectIfAuth({ children }) {
   const { user } = useAuthContext();
   if (user) return <Navigate to="/onboarding" replace />;
+  return children;
+}
+
+function RedirectIfOnboarded({ children }) {
+  const { userAgent } = useUserAgent();
+  if (userAgent) return <Navigate to="/mesh" replace />;
   return children;
 }
 
@@ -32,7 +38,7 @@ export default function App() {
       />
       <Route
         path="/onboarding"
-        element={<RequireAuth><OnboardingPage /></RequireAuth>}
+        element={<RequireAuth><RedirectIfOnboarded><OnboardingPage /></RedirectIfOnboarded></RequireAuth>}
       />
       <Route
         path="/mesh"

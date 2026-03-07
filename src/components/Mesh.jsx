@@ -5,16 +5,6 @@ import UserMenu from "./UserMenu";
 import { JAY_SCOUT, searchOpportunities, generateBriefing, OPP_TYPE_META } from "../jayScoutData";
 // profiles-index.json is loaded lazily to avoid bloating the main bundle
 
-// ── Default user placeholder (replaced by onboarded profile) ──
-const DEFAULT_USER = {
-  id: "a1", name: "Tunde Adeyemi", avatar: "TA", color: "#6366f1",
-  title: "Sr. ML Engineer", company: "Flutterwave", status: "open_to_work",
-  goals: ["Find Staff ML Engineer roles at fintech companies"],
-  background: "5 years building production AI/ML systems for African fintech.",
-  dealbreakers: [],
-  isYou: true,
-};
-
 // ── Agent colors (cycled for indexed profiles) ──
 const AGENT_COLORS = ["#ec4899", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4", "#f97316", "#14b8a6", "#e879f9", "#fb923c", "#34d399", "#818cf8", "#fbbf24", "#a78bfa", "#38bdf8", "#f472b6"];
 
@@ -104,7 +94,7 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
 
   // Build agents list from profiles index + user profile
   const agents = useMemo(() => {
-    const me = userAgent ? {
+    const me = {
       id: "a1",
       name: userAgent.profile.name,
       avatar: userAgent.profile.name.split(" ").map(w => w[0]).join("").slice(0, 2),
@@ -116,7 +106,7 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
       background: userAgent.profile.summary,
       dealbreakers: userAgent.intent.dealbreakers.split(/[.;]/).map(s => s.trim()).filter(Boolean),
       isYou: true,
-    } : DEFAULT_USER;
+    };
 
     const meshAgents = pickAgentsFromIndex(meshProfiles, me.status, 15);
     return [me, JAY_SCOUT, ...meshAgents];
