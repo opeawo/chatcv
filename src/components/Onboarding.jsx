@@ -675,14 +675,24 @@ function StepActivate({ profile, intent, guardrails, onComplete }) {
   const [agentLog,  setAgentLog]  = useState([]);
   const [done,      setDone]      = useState(false);
   const [firstConn, setFirstConn] = useState(null);
+  const [networkAgents, setNetworkAgents] = useState([]);
   const logRef = useRef();
 
-  const NETWORK_AGENTS = [
-    { name: "Priya Sharma", title: "Product Director", company: "Razorpay", color: "#ec4899", avatar: "PS" },
-    { name: "James Okonkwo", title: "CTO", company: "Paystack", color: "#10b981", avatar: "JO" },
-    { name: "Mei Lin", title: "AI Researcher", company: "DeepMind", color: "#f59e0b", avatar: "ML" },
-    { name: "Aisha Bello", title: "Venture Partner", company: "Partech Africa", color: "#06b6d4", avatar: "AB" },
-  ];
+  // Load real profiles from the index instead of hardcoded demo agents
+  useEffect(() => {
+    import("../profiles-index.json").then(mod => {
+      const all = mod.default || mod;
+      const colors = ["#ec4899", "#10b981", "#f59e0b", "#06b6d4", "#8b5cf6", "#f97316"];
+      const shuffled = [...all].sort(() => Math.random() - 0.5).slice(0, 4);
+      setNetworkAgents(shuffled.map((p, i) => ({
+        name: p.n,
+        title: p.l,
+        company: p.c,
+        color: colors[i % colors.length],
+        avatar: p.n.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase(),
+      })));
+    });
+  }, []);
 
   const addLog = (msg, type = "info") => {
     setAgentLog(l => [...l, { msg, type, id: Math.random().toString(36).slice(2), t: new Date().toLocaleTimeString("en",{hour12:false}) }]);
@@ -690,6 +700,7 @@ function StepActivate({ profile, intent, guardrails, onComplete }) {
   };
 
   useEffect(() => {
+    if (networkAgents.length === 0) return; // Wait for profiles to load
     const sequence = async () => {
       await delay(600);  addLog("Agent initialising…", "system");
       await delay(900);  addLog(`Identity loaded: ${profile.name} · ${profile.title}`, "system");
@@ -697,10 +708,10 @@ function StepActivate({ profile, intent, guardrails, onComplete }) {
       await delay(600);  addLog(`Guardrails configured: ${guardrails.loops.length} human-loop triggers`, "system");
       setPhase(1);
       await delay(800);  addLog("Scanning agent network…", "scan");
-      await delay(1200); addLog(`Found ${NETWORK_AGENTS.length} agents to evaluate`, "scan");
+      await delay(1200); addLog(`Found ${networkAgents.length} agents to evaluate`, "scan");
       setPhase(2);
 
-      for (const ag of NETWORK_AGENTS) {
+      for (const ag of networkAgents) {
         await delay(900);
         addLog(`Evaluating ${ag.name} (${ag.title} @ ${ag.company})…`, "eval");
         await delay(1100);
@@ -737,7 +748,7 @@ Reply: {"connect":true/false,"reason":"one sentence"}`,
       setDone(true);
     };
     sequence();
-  }, []);
+  }, [networkAgents]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 24, width: "100%", maxWidth: 520 }}>
