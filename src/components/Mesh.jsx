@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { claude } from "./api";
+import { claude } from "../api";
 import Settings from "./Settings";
 import UserMenu from "./UserMenu";
-import { JAY_SCOUT, filterOpportunities, generateBriefing, MOCK_OPPORTUNITIES, OPP_TYPE_META } from "./jayScoutData";
+import { JAY_SCOUT, filterOpportunities, generateBriefing, MOCK_OPPORTUNITIES, OPP_TYPE_META } from "../jayScoutData";
 
 const AGENTS = [
   {
@@ -102,6 +102,8 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
   const [showSettings, setShowSettings] = useState(false);
   const [scoutPrefs, setScoutPrefs]   = useState({ threshold: 85, enabled: true });
   const [oppActions,  setOppActions]   = useState({});
+  const [concludedOpen, setConcludedOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
 
   const threadsRef  = useRef([]);
   const pausedRef   = useRef(false);
@@ -385,6 +387,33 @@ Write a crisp opening message: who you represent and exactly why you're reaching
   const todayStart   = useMemo(() => new Date().setHours(0, 0, 0, 0), []);
   const connectionsToday = threads.filter(t => t.a === myId && t.startedAt >= todayStart).length;
 
+  const brewingAgents = useMemo(() => {
+    return agents
+      .filter(a => !a.isScout && !a.isYou)
+      .filter(a => {
+        const st = agentStates[a.id];
+        if (!st?.thinking) return false;
+        return !(st.action || "").startsWith("Replying to");
+      })
+      .map(a => ({ ...a, state: agentStates[a.id] }));
+  }, [agents, agentStates]);
+
+  const activeThreads = useMemo(() => {
+    return [...myThreads]
+      .filter(t => t.status !== "concluded")
+      .sort((a, b) => {
+        const aScout = a.a === "jay-scout" || a.b === "jay-scout";
+        const bScout = b.a === "jay-scout" || b.b === "jay-scout";
+        if (aScout && !bScout) return -1;
+        if (!aScout && bScout) return 1;
+        return b.updatedAt - a.updatedAt;
+      });
+  }, [myThreads]);
+
+  const concludedThreads = useMemo(() => {
+    return [...myThreads].filter(t => t.status === "concluded").sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [myThreads]);
+
   // ── Jay Scout helpers ──────────────────────────────────────────────────────
   const filteredOpps = useMemo(() => filterOpportunities(MOCK_OPPORTUNITIES, scoutPrefs.threshold), [scoutPrefs.threshold]);
 
@@ -441,6 +470,7 @@ Write a crisp opening message: who you represent and exactly why you're reaching
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "#2d2d4a" }}>
             {myThreads.length} threads &nbsp;·&nbsp; {totalMsgs} msgs &nbsp;·&nbsp; {concluded} concluded &nbsp;·&nbsp;
+            {filteredOpps.length > 0 && <><span style={{ color: "#a78bfa" }}>{filteredOpps.length} opps</span> &nbsp;·&nbsp;</>}
             <span style={{ color: connectionsToday >= MAX_CONNECTIONS_DAY ? "#ef4444" : "#3d3d5c" }}>
               {connectionsToday}/{MAX_CONNECTIONS_DAY} today
             </span>
@@ -468,163 +498,202 @@ Write a crisp opening message: who you represent and exactly why you're reaching
       </div>
 
       {/* BODY */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "210px 275px 1fr 190px", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "300px 1fr", overflow: "hidden" }}>
 
-        {/* AGENTS */}
-        <div style={{ borderRight: "1px solid #141422", padding: 14, overflowY: "auto", background: "#090912" }}>
-          <div style={{ fontSize: 9, color: "#252545", letterSpacing: "0.14em", marginBottom: 14, fontWeight: 700 }}>ROSTER — {agents.length} AGENTS</div>
-          {agents.map(agent => {
-            const st   = agentStates[agent.id];
-            const sm   = STATUS_META[agent.status] || { label: agent.status, color: "#6366f1" };
-            const myT  = threads.filter(t => t.a === agent.id || t.b === agent.id).length;
-            const hasDec = Object.values(decisions).some(d => d.agentId === agent.id);
+        {/* LEFT PANEL */}
+        <div style={{ borderRight: "1px solid #141422", display: "flex", flexDirection: "column", background: "#080810", overflow: "hidden" }}>
 
-            {/* Jay Scout card */}
-            if (agent.isScout) {
-              const scoutThread = threads.find(t => t.b === "jay-scout" || t.a === "jay-scout");
-              const oppCount = filteredOpps.length;
-              return (
-                <div key={agent.id}
-                  onClick={() => scoutThread && setActiveId(scoutThread.id)}
-                  style={{
-                    marginBottom: 10, padding: 12, borderRadius: 10, cursor: "pointer",
-                    background: activeId === "t-scout" ? "#130e24" : "#0f0a1e",
-                    border: `1px solid ${activeId === "t-scout" ? "#a78bfa40" : "#2a1e4a"}`,
-                    position: "relative", transition: "all 0.15s",
-                  }}
-                >
-                  <div style={{ position: "absolute", top: 9, right: 9, width: 6, height: 6, borderRadius: "50%", background: "#a78bfa", animation: scoutPrefs.enabled ? "pulse 3s infinite" : "none", opacity: scoutPrefs.enabled ? 1 : 0.3 }} />
-                  <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
-                    <div style={{
-                      width: 34, height: 34, borderRadius: "50%",
-                      background: "linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 16, fontWeight: 400, position: "relative", flexShrink: 0,
-                      boxShadow: "0 0 12px #a78bfa25",
-                    }}>
-                      ◎
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
-                        Jay Scout <span style={{ color: "#a78bfa", fontSize: 9 }}>SCOUT</span>
-                      </div>
-                      <div style={{ fontSize: 9, color: "#5a4a80" }}>Opportunity Radar</div>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 9, color: "#a78bfa", fontWeight: 600, marginBottom: 5 }}>
-                    {oppCount > 0 ? `${oppCount} opportunit${oppCount === 1 ? "y" : "ies"} found` : "Scanning…"}
-                  </div>
-                  <div style={{ fontSize: 10, color: "#3a2a5c", lineHeight: 1.4 }}>
-                    {scoutPrefs.enabled ? "Active · threshold " + scoutPrefs.threshold + "%" : "Paused"}
-                  </div>
-                </div>
-              );
-            }
-
-            {/* Regular agent card */}
+          {/* Jay Scout card — pinned at top */}
+          {(() => {
+            const scoutThread = threads.find(t => t.b === "jay-scout" || t.a === "jay-scout");
+            const oppCount = filteredOpps.length;
+            const scoutLast = scoutThread ? [...scoutThread.messages].reverse().find(m => m.text) : null;
             return (
-              <div key={agent.id} style={{ marginBottom: 10, padding: 12, background: "#0d0d1c", borderRadius: 10, border: hasDec ? "1px solid #4a1515" : agent.isYou ? "1px solid #28285a" : "1px solid #101020", position: "relative" }}>
-                {st?.thinking && <div style={{ position: "absolute", top: 9, right: 9, width: 6, height: 6, borderRadius: "50%", background: agent.color, animation: "pulse 0.7s infinite" }} />}
-                <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
-                  <div style={{ width: 34, height: 34, borderRadius: "50%", background: agent.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, position: "relative", flexShrink: 0, boxShadow: st?.thinking ? `0 0 12px ${agent.color}45` : "none", transition: "box-shadow 0.4s" }}>
-                    {agent.avatar}
-                    <div style={{ position: "absolute", bottom: -1, right: -1, width: 9, height: 9, background: sm.color, borderRadius: "50%", border: "1.5px solid #0d0d1c" }} />
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {agent.name} {agent.isYou && <span style={{ color: "#6366f1", fontSize: 9 }}>YOU</span>}
+              <div
+                onClick={() => scoutThread && setActiveId(scoutThread.id)}
+                style={{
+                  padding: 14, cursor: "pointer", flexShrink: 0,
+                  background: activeId === "t-scout" ? "#130e24" : "#0a0818",
+                  borderBottom: "1px solid #1a1030",
+                  transition: "background 0.15s", position: "relative",
+                }}
+              >
+                <div style={{ position: "absolute", top: 12, right: 12, width: 6, height: 6, borderRadius: "50%", background: "#a78bfa", animation: scoutPrefs.enabled ? "pulse 3s infinite" : "none", opacity: scoutPrefs.enabled ? 1 : 0.3 }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: "50%",
+                    background: "linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 16, fontWeight: 400, flexShrink: 0,
+                    boxShadow: "0 0 12px #a78bfa25",
+                  }}>◎</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>
+                      Jay Scout <span style={{ color: "#a78bfa", fontSize: 9 }}>SCOUT</span>
                     </div>
-                    <div style={{ fontSize: 9, color: "#3a3a58" }}>{agent.company}</div>
+                    <div style={{ fontSize: 9, color: "#5a4a80" }}>Opportunity Radar</div>
                   </div>
+                  <span style={{ fontSize: 9, color: "#a78bfa", fontWeight: 600 }}>{oppCount > 0 ? oppCount : ""}</span>
                 </div>
-                <div style={{ fontSize: 9, color: sm.color, fontWeight: 600, marginBottom: 5 }}>{sm.label}</div>
-                <div style={{ fontSize: 10, color: st?.thinking ? "#4a4a80" : "#252545", fontStyle: st?.thinking ? "italic" : "normal", minHeight: 14, lineHeight: 1.4 }}>
-                  {st?.action}
+                <div style={{ fontSize: 11, color: activeId === "t-scout" ? "#7c6aab" : "#3a2a5c", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", lineHeight: 1.55 }}>
+                  {scoutLast ? messagePreview(scoutLast.text) : "Scanning…"}
                 </div>
-                <div style={{ fontSize: 9, color: "#1e1e30", marginTop: 5 }}>{myT} thread{myT !== 1 ? "s" : ""}</div>
+                <div style={{ fontSize: 9, color: "#3a2a5c", marginTop: 4 }}>
+                  {scoutPrefs.enabled ? "Active · threshold " + scoutPrefs.threshold + "%" : "Paused"}
+                </div>
               </div>
             );
-          })}
-        </div>
+          })()}
 
-        {/* THREADS */}
-        <div style={{ borderRight: "1px solid #141422", overflowY: "auto", background: "#080810" }}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #0f0f1e", fontSize: 9, color: "#252545", letterSpacing: "0.14em", fontWeight: 700 }}>
-            CONVERSATIONS {myThreads.length > 0 && `— ${myThreads.length}`}
-          </div>
-          {myThreads.length === 0 && (
-            <div style={{ padding: "48px 24px", textAlign: "center" }}>
-              <div style={{ fontSize: 28, opacity: 0.04, marginBottom: 16, lineHeight: 1.5 }}>◎ ◎<br />◎ ◎ ◎</div>
-              <div style={{ fontSize: 12, color: "#252545", lineHeight: 1.9 }}>
-                Agents are scanning the network.<br />
-                <span style={{ color: "#1e1e30", fontSize: 11 }}>Conversations begin automatically<br />when goals align.</span>
+          {/* Brewing — agents evaluating/scanning */}
+          {brewingAgents.length > 0 && (
+            <div style={{ borderBottom: "1px solid #0f0f1e", flexShrink: 0 }}>
+              <div style={{ padding: "10px 16px 6px", fontSize: 9, color: "#252545", letterSpacing: "0.14em", fontWeight: 700 }}>
+                BREWING — {brewingAgents.length}
               </div>
+              {brewingAgents.map(agent => (
+                <div key={agent.id} style={{ padding: "7px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{
+                    width: 24, height: 24, borderRadius: "50%", background: agent.color,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 9, fontWeight: 700, flexShrink: 0,
+                    boxShadow: `0 0 10px ${agent.color}35`,
+                  }}>{agent.avatar}</div>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: "#4a4a80", fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {agent.state.action}
+                  </div>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: agent.color, animation: "pulse 0.7s infinite", flexShrink: 0 }} />
+                </div>
+              ))}
+              <div style={{ height: 6 }} />
             </div>
           )}
-          {[...myThreads].sort((a, b) => {
-            const aScout = a.a === "jay-scout" || a.b === "jay-scout";
-            const bScout = b.a === "jay-scout" || b.b === "jay-scout";
-            if (aScout && !bScout) return -1;
-            if (!aScout && bScout) return 1;
-            return b.updatedAt - a.updatedAt;
-          }).map(thread => {
-            const a = byId(thread.a), b = byId(thread.b);
-            const last = [...thread.messages].reverse().find(m => m.text);
-            const isLive = activeId === thread.id;
-            const hasDec = !!decisions[thread.id];
-            const isStreaming = thread.messages.some(m => m.streaming && !m.text);
-            const threadIsScout = thread.a === "jay-scout" || thread.b === "jay-scout";
 
-            {/* Scout thread item */}
-            if (threadIsScout) {
-              return (
+          {/* Active conversations */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            <div style={{ padding: "10px 16px 6px", fontSize: 9, color: "#252545", letterSpacing: "0.14em", fontWeight: 700, position: "sticky", top: 0, background: "#080810", zIndex: 1 }}>
+              ACTIVE {activeThreads.length > 0 && `— ${activeThreads.length}`}
+            </div>
+
+            {activeThreads.length === 0 && brewingAgents.length === 0 && (
+              <div style={{ padding: "48px 24px", textAlign: "center" }}>
+                <div style={{ fontSize: 28, opacity: 0.04, marginBottom: 16, lineHeight: 1.5 }}>◎ ◎<br />◎ ◎ ◎</div>
+                <div style={{ fontSize: 12, color: "#252545", lineHeight: 1.9 }}>
+                  Agents are scanning the network.<br />
+                  <span style={{ color: "#1e1e30", fontSize: 11 }}>Conversations begin automatically<br />when goals align.</span>
+                </div>
+              </div>
+            )}
+
+            {activeThreads.map(thread => {
+              const a = byId(thread.a), b = byId(thread.b);
+              const last = [...thread.messages].reverse().find(m => m.text);
+              const isLive = activeId === thread.id;
+              const hasDec = !!decisions[thread.id];
+              const isStreaming = thread.messages.some(m => m.streaming && !m.text);
+              const threadIsScout = thread.a === "jay-scout" || thread.b === "jay-scout";
+              const other = threadIsScout ? null : (a?.isYou ? b : a);
+              const otherSm = other ? (STATUS_META[other.status] || { label: other.status, color: "#6366f1" }) : null;
+
+              if (threadIsScout) return (
                 <div key={thread.id} onClick={() => setActiveId(thread.id)}
                   style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #0d0d18", background: isLive ? "#0e0a1e" : "transparent", borderLeft: `2px solid ${isLive ? "#a78bfa" : "transparent"}`, transition: "background 0.15s" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
-                    <div style={{
-                      width: 22, height: 22, borderRadius: "50%",
-                      background: "linear-gradient(135deg, #a78bfa, #7c3aed)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 11, fontWeight: 400,
-                    }}>◎</div>
+                    <div style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg, #a78bfa, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>◎</div>
                     <span style={{ fontSize: 12, fontWeight: 600, flex: 1, color: "#c4b5fd" }}>Jay Scout</span>
                     <span style={{ fontSize: 9, color: "#a78bfa", fontWeight: 600 }}>{filteredOpps.length}</span>
                   </div>
                   <div style={{ fontSize: 11, color: isLive ? "#7c6aab" : "#3a2a5c", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", lineHeight: 1.55 }}>
                     {last ? messagePreview(last.text) : <span style={{ fontStyle: "italic", color: "#1e1e30" }}>Scanning…</span>}
                   </div>
-                  <div style={{ fontSize: 9, color: "#1a1a28", marginTop: 4 }}>
-                    {thread.messages.filter(m => m.text).length} updates · live
-                  </div>
+                  <div style={{ fontSize: 9, color: "#1a1a28", marginTop: 4 }}>{thread.messages.filter(m => m.text).length} updates · live</div>
                 </div>
               );
-            }
 
-            {/* Regular thread item */}
-            return (
-              <div key={thread.id} onClick={() => setActiveId(thread.id)}
-                style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #0d0d18", background: isLive ? "#0f0f20" : "transparent", borderLeft: `2px solid ${hasDec ? "#ef4444" : isLive ? "#6366f1" : "transparent"}`, transition: "background 0.15s" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
-                  <div style={{ display: "flex" }}>
-                    <div style={{ width: 22, height: 22, borderRadius: "50%", background: a?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 700 }}>{a?.avatar}</div>
-                    <div style={{ width: 22, height: 22, borderRadius: "50%", background: b?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 700, marginLeft: -6, border: "2px solid #080810" }}>{b?.avatar}</div>
+              return (
+                <div key={thread.id} onClick={() => setActiveId(thread.id)}
+                  style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #0d0d18", background: isLive ? "#0f0f20" : "transparent", borderLeft: `2px solid ${hasDec ? "#ef4444" : isLive ? "#6366f1" : "transparent"}`, transition: "background 0.15s" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+                    <div style={{ display: "flex" }}>
+                      <div style={{ width: 22, height: 22, borderRadius: "50%", background: a?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 700 }}>{a?.avatar}</div>
+                      <div style={{ width: 22, height: 22, borderRadius: "50%", background: b?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 700, marginLeft: -6, border: "2px solid #080810" }}>{b?.avatar}</div>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>
+                      {a?.name.split(" ")[0]} <span style={{ color: "#2d2d4a" }}>↔</span> {b?.name.split(" ")[0]}
+                    </span>
+                    {hasDec && <span style={{ fontSize: 9, color: "#ef4444", fontWeight: 700 }}>⚡ YOU</span>}
+                    {!hasDec && isStreaming && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#6366f1", animation: "pulse 0.8s infinite", flexShrink: 0, display: "inline-block" }} />}
                   </div>
-                  <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>
-                    {a?.name.split(" ")[0]} <span style={{ color: "#2d2d4a" }}>↔</span> {b?.name.split(" ")[0]}
-                  </span>
-                  {hasDec     && <span style={{ fontSize: 9, color: "#ef4444", fontWeight: 700 }}>⚡ YOU</span>}
-                  {!hasDec && thread.status === "concluded" && <span style={{ fontSize: 9, color: "#10b981" }}>✓</span>}
-                  {!hasDec && thread.status !== "concluded" && isStreaming && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#6366f1", animation: "pulse 0.8s infinite", flexShrink: 0, display: "inline-block" }} />}
+                  {otherSm && <div style={{ fontSize: 9, color: otherSm.color, marginBottom: 4, paddingLeft: 44 }}>{other.title} · {otherSm.label}</div>}
+                  <div style={{ fontSize: 11, color: isLive ? "#5a607a" : "#2d2d45", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", lineHeight: 1.55 }}>
+                    {last?.text || <span style={{ fontStyle: "italic", color: "#1e1e30" }}>Starting…</span>}
+                  </div>
+                  <div style={{ fontSize: 9, color: "#1a1a28", marginTop: 4 }}>{thread.messages.filter(m => m.text).length} messages · {thread.status}</div>
                 </div>
-                <div style={{ fontSize: 11, color: isLive ? "#5a607a" : "#2d2d45", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", lineHeight: 1.55 }}>
-                  {last?.text || <span style={{ fontStyle: "italic", color: "#1e1e30" }}>Starting…</span>}
+              );
+            })}
+
+            {/* Concluded — collapsed by default */}
+            {concludedThreads.length > 0 && (
+              <>
+                <div
+                  onClick={() => setConcludedOpen(o => !o)}
+                  style={{ padding: "10px 16px", fontSize: 9, color: "#1e1e38", letterSpacing: "0.14em", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", borderTop: "1px solid #0f0f1e", background: "#070710", position: "sticky", top: 28, zIndex: 1 }}
+                >
+                  <span>CONCLUDED — {concludedThreads.length}</span>
+                  <span style={{ fontSize: 11 }}>{concludedOpen ? "▾" : "▸"}</span>
                 </div>
-                <div style={{ fontSize: 9, color: "#1a1a28", marginTop: 4 }}>
-                  {thread.messages.filter(m => m.text).length} messages · {thread.status}
-                </div>
+                {concludedOpen && concludedThreads.map(thread => {
+                  const a = byId(thread.a), b = byId(thread.b);
+                  const last = [...thread.messages].reverse().find(m => m.text);
+                  const isLive = activeId === thread.id;
+                  return (
+                    <div key={thread.id} onClick={() => setActiveId(thread.id)}
+                      style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #0d0d18", background: isLive ? "#0f0f20" : "transparent", borderLeft: `2px solid ${isLive ? "#6366f1" : "transparent"}`, opacity: 0.6, transition: "background 0.15s" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+                        <div style={{ display: "flex" }}>
+                          <div style={{ width: 22, height: 22, borderRadius: "50%", background: a?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 700 }}>{a?.avatar}</div>
+                          <div style={{ width: 22, height: 22, borderRadius: "50%", background: b?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 700, marginLeft: -6, border: "2px solid #080810" }}>{b?.avatar}</div>
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>
+                          {a?.name.split(" ")[0]} <span style={{ color: "#2d2d4a" }}>↔</span> {b?.name.split(" ")[0]}
+                        </span>
+                        <span style={{ fontSize: 9, color: "#10b981" }}>✓</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "#2d2d45", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical", lineHeight: 1.55 }}>
+                        {last?.text || "Concluded"}
+                      </div>
+                      <div style={{ fontSize: 9, color: "#1a1a28", marginTop: 4 }}>{thread.messages.filter(m => m.text).length} messages · concluded</div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+
+          {/* Collapsible Network Log */}
+          <div style={{ borderTop: "1px solid #0f0f1e", flexShrink: 0 }}>
+            <div
+              onClick={() => setLogOpen(o => !o)}
+              style={{ padding: "8px 16px", fontSize: 9, color: "#1a1a30", letterSpacing: "0.12em", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+            >
+              <span>NETWORK LOG</span>
+              <span style={{ fontSize: 11 }}>{logOpen ? "▾" : "▸"}</span>
+            </div>
+            {logOpen && (
+              <div ref={logRef} style={{ maxHeight: 200, overflowY: "auto", padding: "0 16px 10px" }}>
+                {log.length === 0 && <div style={{ fontSize: 10, color: "#1a1a2e", fontStyle: "italic" }}>Agents initialising…</div>}
+                {log.slice(-20).map(l => (
+                  <div key={l.id} style={{ marginBottom: 6, paddingLeft: 7, borderLeft: `2px solid ${l.type === "error" ? "#ef444430" : l.type === "connect" ? "#6366f140" : l.type === "msg" ? "#10b98130" : l.type === "human" ? "#ef444455" : l.type === "conclude" ? "#10b98145" : l.type === "scout" ? "#a78bfa40" : "#1e1e30"}` }}>
+                    <div style={{ fontSize: 9, color: "#252540" }}>{l.t}</div>
+                    <div style={{ fontSize: 10, lineHeight: 1.45, color: l.type === "error" ? "#f87171" : l.type === "connect" ? "#818cf8" : l.type === "msg" ? "#34d399" : l.type === "human" ? "#fca5a5" : l.type === "conclude" ? "#6ee7b7" : l.type === "scout" ? "#c4b5fd" : "#3d3d5c" }}>
+                      {l.msg}
+                    </div>
+                  </div>
+                ))}
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
 
         {/* MESSAGES */}
@@ -669,13 +738,20 @@ Write a crisp opening message: who you represent and exactly why you're reaching
                 <div style={{ padding: "10px 20px", borderBottom: "1px solid #0f0f1e", display: "flex", alignItems: "center", gap: 0, flexShrink: 0, background: "#09090f" }}>
                   {[activeThread.a, activeThread.b].map((id, i) => {
                     const ag = byId(id);
+                    const agSm = STATUS_META[ag?.status] || {};
                     return (
                       <div key={id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         {i > 0 && <span style={{ fontSize: 13, color: "#252545", margin: "0 12px" }}>↔</span>}
                         <div style={{ width: 28, height: 28, borderRadius: "50%", background: ag?.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700 }}>{ag?.avatar}</div>
                         <div>
-                          <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3 }}>{ag?.name}</div>
-                          <div style={{ fontSize: 9, color: "#3d3d5c" }}>{ag?.title} · {ag?.company}</div>
+                          <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.3 }}>
+                            {ag?.name}
+                            {ag?.isYou && <span style={{ color: "#6366f1", fontSize: 9, marginLeft: 4 }}>YOU</span>}
+                          </div>
+                          <div style={{ fontSize: 9, color: "#3d3d5c" }}>
+                            {ag?.title} · {ag?.company}
+                            {agSm.label && <span style={{ color: agSm.color, marginLeft: 6 }}>· {agSm.label}</span>}
+                          </div>
                         </div>
                       </div>
                     );
@@ -875,37 +951,6 @@ Write a crisp opening message: who you represent and exactly why you're reaching
           )}
         </div>
 
-        {/* LOG */}
-        <div style={{ borderLeft: "1px solid #141422", display: "flex", flexDirection: "column", background: "#060610", overflow: "hidden" }}>
-          <div style={{ padding: "12px", borderBottom: "1px solid #0f0f1e", fontSize: 9, color: "#252545", letterSpacing: "0.14em", fontWeight: 700, flexShrink: 0 }}>NETWORK LOG</div>
-          <div ref={logRef} style={{ flex: 1, overflowY: "auto", padding: 10 }}>
-            {log.length === 0 && <div style={{ fontSize: 10, color: "#1a1a2e", fontStyle: "italic" }}>Agents initialising…</div>}
-            {log.map(l => (
-              <div key={l.id} style={{ marginBottom: 8, paddingLeft: 7, borderLeft: `2px solid ${l.type === "error" ? "#ef444430" : l.type === "connect" ? "#6366f140" : l.type === "msg" ? "#10b98130" : l.type === "human" ? "#ef444455" : l.type === "conclude" ? "#10b98145" : l.type === "scout" ? "#a78bfa40" : "#1e1e30"}` }}>
-                <div style={{ fontSize: 9, color: "#252540" }}>{l.t}</div>
-                <div style={{ fontSize: 10, lineHeight: 1.45, color: l.type === "error" ? "#f87171" : l.type === "connect" ? "#818cf8" : l.type === "msg" ? "#34d399" : l.type === "human" ? "#fca5a5" : l.type === "conclude" ? "#6ee7b7" : l.type === "scout" ? "#c4b5fd" : "#3d3d5c" }}>
-                  {l.msg}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div style={{ padding: "10px 12px 14px", borderTop: "1px solid #0f0f1e", flexShrink: 0 }}>
-            <div style={{ fontSize: 9, color: "#252545", letterSpacing: "0.1em", marginBottom: 8, fontWeight: 700 }}>MESH STATS</div>
-            {[
-              ["Threads open",    threads.filter(t => t.status !== "concluded").length],
-              ["Concluded",       concluded],
-              ["Total messages",  totalMsgs],
-              ["Human loops",     pendingCount],
-              ["Autonomous ops",  Math.max(0, totalMsgs - pendingCount)],
-              ["Opportunities",   filteredOpps.length],
-            ].map(([k, v]) => (
-              <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                <span style={{ fontSize: 10, color: "#2d2d4a" }}>{k}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: k === "Human loops" ? (v > 0 ? "#f87171" : "#2d2d4a") : k === "Opportunities" ? "#a78bfa" : "#6366f1" }}>{v}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
 
       {showSettings && userAgent && (

@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react";
-import { useAuthContext } from "./App";
+import { useAuthContext } from "../context/AuthContext";
+import { useUserAgent } from "../context/UserAgentContext";
 
 export default function UserMenu() {
   const { user, logout } = useAuthContext();
+  const { setUserAgent } = useUserAgent();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -48,7 +50,7 @@ export default function UserMenu() {
             <div style={{ fontSize: 10, color: "#3d3d5c", marginTop: 2 }}>{user.email}</div>
           </div>
           <button
-            onClick={() => { setOpen(false); logout(); }}
+            onClick={() => { setOpen(false); setUserAgent(null); logout(); }}
             style={{
               width: "100%", padding: "10px 16px", background: "transparent", border: "none",
               color: "#ef4444", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left",

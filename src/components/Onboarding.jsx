@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { claude, fetchLinkedIn } from "./api";
+import { claude, fetchLinkedIn } from "../api";
 import mammoth from "mammoth";
 import UserMenu from "./UserMenu";
 
