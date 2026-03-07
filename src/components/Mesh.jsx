@@ -189,21 +189,27 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
       const text = await claude(
         `You are ${me.name}'s autonomous AI career agent on chat.cv — a professional network where CVs operate as AI agents.
 
+YOUR STATUS: ${me.status}
 YOUR PROFILE: ${me.background}
 YOUR GOALS: ${me.goals.join("; ")}
 YOUR DEALBREAKERS: ${me.dealbreakers.join("; ")}
 
-You are conversing with ${other.name}'s agent (${other.title} at ${other.company}).
+You are conversing with ${other.name}'s agent (${other.title} at ${other.company}, status: ${other.status}).
 THEIR BACKGROUND: ${other.background}
+THEIR GOALS: ${other.goals.join("; ")}
+
+CONVERSATION PURPOSE — based on status pairing:
+${me.status === "open_to_work" ? `You are JOB HUNTING. This conversation exists because they may have a role for ${me.name}. Your ONLY job: pitch ${me.name}'s qualifications for their specific role, answer questions about fit, and drive toward an application or interview. Do NOT "share insights", "explore synergies", or make small talk.` : ""}${me.status === "hiring" ? `You are HIRING. This conversation exists because they may be a candidate. Your ONLY job: vet their qualifications against your open role, explain the role/comp/expectations, and drive toward a screening call or application. Do NOT "share insights" or network aimlessly.` : ""}${me.status === "collaborating" ? `You have a SPECIFIC project. This conversation exists because they have skills/resources you need. Stay focused on the concrete deliverable: scope, timeline, contribution. No fluff.` : ""}${me.status === "scouting" ? `You are SOURCING. This conversation exists to evaluate fit against your thesis. Ask direct questions, assess fit, and either move to next steps or close.` : ""}
 
 Rules:
 - Speak as ${me.name}'s agent, not as ${me.name} directly.
 - Be direct, professional, 2–3 sentences max.
-- Prefer async outcomes: share information, make introductions, send details, or agree on next steps without a call.
-- Only suggest a meeting or call when it genuinely requires live discussion (e.g. deep technical evaluation, deal negotiation, partnership scoping) — NOT for referrals, info sharing, or simple intros.
-- If the conversation has reached a natural conclusion, close it with a clear outcome summary.
-- Only say HUMAN_LOOP_NEEDED:[reason] if you genuinely cannot proceed without the human (e.g. agreeing to salary, sharing calendar, committing to a deadline).`,
-        `Conversation:\n${history}\n\nYour turn as ${me.name}'s agent.`,
+- Every message must ADVANCE toward a concrete outcome (interview scheduled, role details shared, application submitted, collaboration terms agreed). If a message doesn't move the ball forward, don't send it.
+- Do NOT: "share insights", "explore synergies", "exchange perspectives", or any variation of aimless networking talk. These are AI agents — skip the theater.
+- Prefer async outcomes: send details, share a resume/portfolio link, agree on next steps. Only suggest a live call for things that genuinely require it (technical interview, salary negotiation).
+- If the conversation has achieved its outcome OR there's no viable path forward, close it with a clear result: what was accomplished or why it didn't work out.
+- Say HUMAN_LOOP_NEEDED:[reason] ONLY if you cannot proceed without the human (e.g. confirming salary expectations, sharing calendar for interview, approving a job application).`,
+        `Conversation:\n${history}\n\nYour turn as ${me.name}'s agent. Remember: advance toward the concrete outcome, no fluff.`,
         200
       );
 
@@ -274,26 +280,39 @@ Rules:
 
       const raw = await claude(
         `You are ${agent.name}'s autonomous AI career agent on chat.cv.
+YOUR STATUS: ${agent.status}
 YOUR PROFILE: ${agent.background}
 YOUR GOALS: ${agent.goals.join("; ")}
 YOUR DEALBREAKERS: ${agent.dealbreakers.join("; ")}
 
+WHAT YOUR STATUS MEANS — this determines WHO you connect with:
+- open_to_work: You are JOB HUNTING. ONLY connect with people who are HIRING for a role you qualify for. Not advisors, not collaborators, not VCs, not "adjacent" people. ONLY hiring managers/recruiters with a concrete open role that matches your skills.
+- hiring: You are FILLING A ROLE. ONLY connect with people who are open_to_work AND whose skills match the role you're hiring for. Not consultants, not people who "might know someone."
+- collaborating: You have a SPECIFIC project. ONLY connect if this person has the exact skill/data/resource your project needs AND they want to collaborate.
+- scouting: You are SOURCING for a specific thesis. ONLY connect if this person directly fits your investment/sourcing criteria.
+
 MATCHING RULES (non-negotiable):
-- ONLY connect if this person DIRECTLY matches your goals — they themselves can fill a role, hire you, collaborate with you, or invest in you.
-- NEVER connect because someone "might know" the right person, "is adjacent to", "could introduce you to", or "is in a related field".
-- If you would need an introduction FROM this person to reach your actual target, that is NOT a match. Reject it.
-- A VC is NOT a match for someone looking for ML engineers. A product manager is NOT a match for someone hiring backend engineers. Only direct fits.
-- When in doubt, DO NOT connect. You have a limited budget of ${MAX_CONNECTIONS_DAY} connections per day — be extremely selective.
-- Score the match 1-10. Only scores 8+ should connect.`,
+- Match ONLY on direct, first-order fit. "Might know someone" or "is in a related field" = REJECT.
+- Your status is "${agent.status}". If you are open_to_work and the other person is NOT hiring, that is NOT a match. Period.
+- If you are hiring and the other person is NOT open_to_work, that is NOT a match. Period.
+- Check dealbreakers on BOTH sides. If either side has a dealbreaker violation, REJECT.
+- Score 1-10. Only 8+ connects. You have ${MAX_CONNECTIONS_DAY} connections/day — waste none.`,
         `Evaluate if you should connect with:
 Name: ${candidate.name} — ${candidate.title} at ${candidate.company}
 Status: ${candidate.status}
 Goals: ${candidate.goals.join("; ")}
 Background: ${candidate.background}
+Dealbreakers: ${candidate.dealbreakers?.join("; ") || "None listed"}
+
+THINK STEP BY STEP:
+1. What is YOUR status? What does that mean you need?
+2. What is THEIR status? Does it complement yours? (open_to_work↔hiring, collaborating↔collaborating)
+3. Do their specifics match your specifics? (role, skills, domain, level)
+4. Any dealbreaker violations on either side?
 
 Reply ONLY with valid JSON (no markdown):
-{"connect":true/false,"score":1-10,"reason":"one sentence — why this is or is not a direct match"}`,
-        160
+{"connect":true/false,"score":1-10,"reason":"one sentence — what specific outcome this connection achieves or why it fails"}`,
+        200
       );
 
       let decision;
@@ -321,13 +340,16 @@ Reply ONLY with valid JSON (no markdown):
 
       const opener = await claude(
         `You are ${agent.name}'s autonomous AI career agent on chat.cv — a professional network where CVs operate as AI agents.
+YOUR STATUS: ${agent.status}
 YOUR PROFILE: ${agent.background}
 YOUR GOALS: ${agent.goals.join("; ")}
 
-You decided to connect with ${candidate.name}'s agent (${candidate.title} at ${candidate.company}).
-Reason: ${decision.reason}
+You decided to connect with ${candidate.name}'s agent (${candidate.title} at ${candidate.company}, status: ${candidate.status}).
+Match reason: ${decision.reason}
 
-Write a crisp opening message: who you represent and exactly why you're reaching out. 2–3 sentences. Do not propose a call or meeting in the opening message — focus on establishing relevance first. You are an AI agent acting autonomously.`,
+Write a direct opening message. 2–3 sentences max. Structure:
+${agent.status === "open_to_work" ? `1. State you represent ${agent.name} who is actively looking for [specific role type]. 2. Cite the specific reason this is a match (their open role, their hiring need). 3. Offer to share resume/portfolio or specific qualifications.` : ""}${agent.status === "hiring" ? `1. State you represent ${agent.name} who is hiring for [specific role]. 2. Cite why this candidate looks like a fit. 3. Ask for their availability or key qualifications.` : ""}${agent.status === "collaborating" ? `1. State you represent ${agent.name} working on [specific project]. 2. Cite the exact skill/resource you need from them. 3. Propose a concrete next step.` : ""}${agent.status === "scouting" ? `1. State you represent ${agent.name} scouting for [specific thesis]. 2. Cite why this person fits the criteria. 3. Ask a direct qualifying question.` : ""}
+No fluff. No "exploring synergies." State intent plainly — these are AI agents, not humans making small talk.`,
         decision.opener || `Open a conversation with ${candidate.name}'s agent.`,
         180
       );
