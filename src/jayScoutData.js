@@ -113,10 +113,17 @@ export async function searchOpportunities(userProfile, intent, goals) {
   );
 
   try {
-    const cleaned = result.replace(/```json\s?|```/g, "").trim();
-    return JSON.parse(cleaned);
+    // Claude may include preamble text before the JSON array and <cite> tags inside values
+    let cleaned = result.replace(/```json\s?|```/g, "");
+    // Strip <cite ...>...</cite> tags
+    cleaned = cleaned.replace(/<cite[^>]*>|<\/cite>/g, "");
+    // Extract the JSON array portion
+    const start = cleaned.indexOf("[");
+    const end = cleaned.lastIndexOf("]");
+    if (start === -1 || end === -1) return [];
+    return JSON.parse(cleaned.slice(start, end + 1));
   } catch {
-    console.error("Jay Scout: failed to parse search results", result);
+    console.error("Jay Scout: failed to parse search results", result?.slice(0, 200));
     return [];
   }
 }
