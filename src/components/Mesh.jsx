@@ -2,51 +2,56 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { claude } from "../api";
 import Settings from "./Settings";
 import UserMenu from "./UserMenu";
-import { JAY_SCOUT, filterOpportunities, generateBriefing, MOCK_OPPORTUNITIES, OPP_TYPE_META } from "../jayScoutData";
+import { JAY_SCOUT, searchOpportunities, generateBriefing, OPP_TYPE_META } from "../jayScoutData";
 
 const AGENTS = [
+  // ── Default "you" (replaced by onboarded profile) ──
   {
     id: "a1", name: "Tunde Adeyemi", avatar: "TA", color: "#6366f1",
     title: "Sr. ML Engineer", company: "Flutterwave", status: "open_to_work",
-    goals: ["Find Staff ML Engineer roles", "Connect with CTOs and hiring managers in fintech", "Explore research collaboration on African market LLMs"],
+    goals: ["Find Staff ML Engineer roles at fintech companies", "Get interviews at companies hiring for fraud/payments ML"],
     background: "5 years building production AI/ML systems for African fintech. Built fraud detection at $2B txn/yr, 99.7% precision. Expert in PyTorch, LLMs, MLOps. Open to Staff or Principal Engineer roles.",
     dealbreakers: ["No relocation", "Min $150k", "Must be ML-focused role"],
     isYou: true,
   },
+  // ── HIRING agents (match with open_to_work users) ──
   {
     id: "a2", name: "Priya Sharma", avatar: "PS", color: "#ec4899",
     title: "Product Director", company: "Razorpay", status: "hiring",
-    goals: ["Hire ML engineers with production LLM experience", "Find fintech engineers from high-volume payment systems", "Build advisor network in African markets"],
+    goals: ["Hire Staff ML Engineer for fraud and risk ML", "Find fintech engineers from high-volume payment systems"],
     background: "Product Director at Razorpay overseeing payments intelligence. Led 3 products to $10M ARR. Hiring a Staff ML Engineer for fraud and risk ML. Budget $180k–$220k, remote-first.",
     dealbreakers: ["No junior engineers", "Must have payments domain knowledge"],
   },
   {
     id: "a3", name: "James Okonkwo", avatar: "JO", color: "#10b981",
     title: "CTO", company: "Paystack", status: "hiring",
-    goals: ["Hire Staff ML Engineer for fraud detection", "Connect with AI researchers studying African markets", "Find potential technical advisors"],
-    background: "CTO at Paystack scaling infrastructure to 100M txn/day. Hiring for ML Engineering focused on fraud detection. Deep knowledge of African market constraints.",
+    goals: ["Hire Staff ML Engineer for fraud detection", "Hire senior engineers with African market experience"],
+    background: "CTO at Paystack scaling infrastructure to 100M txn/day. Hiring for ML Engineering focused on fraud detection. Budget $160k–$200k, remote-first. Deep knowledge of African market constraints.",
     dealbreakers: ["Must have African market experience", "Needs production engineering mindset not just research"],
   },
+  // ── COLLABORATING agent ──
   {
     id: "a4", name: "Mei Lin", avatar: "ML", color: "#f59e0b",
     title: "AI Researcher", company: "DeepMind", status: "collaborating",
-    goals: ["Find engineers with real production LLM data from emerging markets", "Co-author paper on LLMs in low-resource African languages", "Connect with ML practitioners in African fintech"],
+    goals: ["Co-author paper on LLMs in low-resource African languages", "Find engineers with real production LLM data from emerging markets"],
     background: "Senior Researcher at DeepMind. Running research initiative on AI in underrepresented markets. Looking for co-authors with production ML deployed in Africa.",
     dealbreakers: ["Must have real deployment data, not just academic work"],
   },
+  // ── HIRING agent ──
   {
     id: "a5", name: "Carlos Reyes", avatar: "CR", color: "#8b5cf6",
     title: "Eng. Manager", company: "Nubank", status: "hiring",
-    goals: ["Hire senior engineers with distributed systems and ML experience", "Find engineers who've scaled fintech infra in emerging markets"],
-    background: "Engineering Manager at Nubank leading 12-person distributed systems team. Hiring 2 Senior Engineers. Strong overlap with African fintech challenges.",
-    dealbreakers: ["Must have 5+ years experience", "Needs full-stack engineering not just ML"],
+    goals: ["Hire 2 Senior Engineers with distributed systems and ML experience", "Find engineers comfortable with Clojure or willing to learn"],
+    background: "Engineering Manager at Nubank leading 12-person distributed systems team. Hiring 2 Senior Engineers with distributed systems and ML experience. Strong overlap with African fintech challenges.",
+    dealbreakers: ["Must have distributed systems experience at scale", "No junior engineers"],
   },
+  // ── SCOUTING agent ──
   {
     id: "a6", name: "Aisha Bello", avatar: "AB", color: "#06b6d4",
     title: "Venture Partner", company: "Partech Africa", status: "scouting",
-    goals: ["Find exceptional African tech founders or pre-founders", "Connect with senior engineers who may start companies", "Build deal flow from operator networks"],
-    background: "Venture Partner at Partech Africa. $280M fund. Looking for senior engineers at the intersection of fintech and AI — potential future founders.",
-    dealbreakers: ["Not interested in pure job seekers — wants entrepreneurial ambition"],
+    goals: ["Find exceptional African tech founders building AI products", "Connect with senior engineers who are starting companies"],
+    background: "Venture Partner at Partech Africa. $280M fund. Looking for senior engineers at the intersection of fintech and AI who are building or about to build a startup.",
+    dealbreakers: ["Must have entrepreneurial intent — not pure job seekers", "Must be building in Africa or for African markets"],
   },
 ];
 
@@ -101,6 +106,7 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
   const [paused,      setPaused]      = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [scoutPrefs, setScoutPrefs]   = useState({ threshold: 85, enabled: true });
+  const [scoutOpps,  setScoutOpps]   = useState([]);
   const [oppActions,  setOppActions]   = useState({});
   const [concludedOpen, setConcludedOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -123,22 +129,26 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
     setTimeout(() => msgEnd.current?.scrollIntoView({ behavior: "smooth" }), 80);
   }, [threads, activeId]);
 
-  // ── Jay Scout: create scout thread on mount ────────────────────────────────
+  // ── Jay Scout: create scout thread on mount (async web search) ─────────────
   const scoutInitRef = useRef(false);
   useEffect(() => {
     if (scoutInitRef.current) return;
     scoutInitRef.current = true;
-    const myId = agents.find(a => a.isYou)?.id || "a1";
-    const filtered = filterOpportunities(MOCK_OPPORTUNITIES, scoutPrefs.threshold);
-    const briefing = generateBriefing(filtered, MOCK_OPPORTUNITIES.length, 12, 8);
+    const myAgent = agents.find(a => a.isYou);
+    const myId = myAgent?.id || "a1";
+    const intent = userAgent?.intent?.intent || myAgent?.status || "open_to_work";
+    const goals = userAgent?.intent?.goals || myAgent?.goals?.join("; ") || "";
+    const profile = myAgent?.background || "";
+
+    // Show loading state
     setThreads(ts => {
       if (ts.find(t => t.id === "t-scout")) return ts;
       return [{
         id: "t-scout", a: myId, b: "jay-scout",
         messages: [{
-          id: "m-scout-briefing-1",
+          id: "m-scout-loading",
           speaker: "jay-scout",
-          text: JSON.stringify(briefing),
+          text: JSON.stringify({ type: "scout_loading", summary: "Searching the web for opportunities matching your profile..." }),
           streaming: false,
           ts: Date.now(),
         }],
@@ -148,8 +158,42 @@ export default function Mesh({ userAgent, onUpdateAgent }) {
       }, ...ts];
     });
     setActiveId("t-scout");
-    setTimeout(() => addLog("Jay Scout posted a new briefing", "scout"), 300);
-  }, [agents, scoutPrefs.threshold, addLog]);
+    addLog("Jay Scout is searching the web...", "scout");
+
+    // Async web search
+    searchOpportunities(profile, intent, goals)
+      .then(opps => {
+        setScoutOpps(opps);
+        const briefing = generateBriefing(opps, intent);
+        setThreads(ts => ts.map(t => t.id !== "t-scout" ? t : {
+          ...t,
+          messages: [{
+            id: "m-scout-briefing-1",
+            speaker: "jay-scout",
+            text: JSON.stringify(briefing),
+            streaming: false,
+            ts: Date.now(),
+          }],
+          updatedAt: Date.now(),
+        }));
+        addLog(`Jay Scout found ${opps.length} opportunities`, "scout");
+      })
+      .catch(err => {
+        console.error("Jay Scout search failed:", err);
+        setThreads(ts => ts.map(t => t.id !== "t-scout" ? t : {
+          ...t,
+          messages: [{
+            id: "m-scout-error",
+            speaker: "jay-scout",
+            text: JSON.stringify({ type: "scout_briefing", summary: "I couldn't complete the web search right now. Try refreshing to search again.", opportunities: [], footer: "" }),
+            streaming: false,
+            ts: Date.now(),
+          }],
+          updatedAt: Date.now(),
+        }));
+        addLog("Jay Scout: web search failed", "error");
+      });
+  }, [agents, userAgent, addLog]);
 
   const setAgentAction = useCallback((id, thinking, action) => {
     setAgentStates(s => ({ ...s, [id]: { thinking, action: action || s[id]?.action } }));
@@ -289,7 +333,7 @@ WHAT YOUR STATUS MEANS — this determines WHO you connect with:
 - open_to_work: You are JOB HUNTING. ONLY connect with people who are HIRING for a role you qualify for. Not advisors, not collaborators, not VCs, not "adjacent" people. ONLY hiring managers/recruiters with a concrete open role that matches your skills.
 - hiring: You are FILLING A ROLE. ONLY connect with people who are open_to_work AND whose skills match the role you're hiring for. Not consultants, not people who "might know someone."
 - collaborating: You have a SPECIFIC project. ONLY connect if this person has the exact skill/data/resource your project needs AND they want to collaborate.
-- scouting: You are SOURCING for a specific thesis. ONLY connect if this person directly fits your investment/sourcing criteria.
+- scouting: You are SOURCING for a specific thesis. ONLY connect if this person directly fits your investment/sourcing criteria. No adjacent people.
 
 MATCHING RULES (non-negotiable):
 - Match ONLY on direct, first-order fit. "Might know someone" or "is in a related field" = REJECT.
@@ -437,7 +481,6 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
   }, [myThreads]);
 
   // ── Jay Scout helpers ──────────────────────────────────────────────────────
-  const filteredOpps = useMemo(() => filterOpportunities(MOCK_OPPORTUNITIES, scoutPrefs.threshold), [scoutPrefs.threshold]);
 
   function parseScoutMessage(text) {
     try { const d = JSON.parse(text); return d.type?.startsWith("scout_") ? d : null; }
@@ -446,6 +489,7 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
 
   function messagePreview(text) {
     const d = parseScoutMessage(text);
+    if (d?.type === "scout_loading") return "Searching the web...";
     if (d?.type === "scout_briefing") return `${d.opportunities.length} opportunities found`;
     if (d?.type === "scout_detail") return d.detail?.slice(0, 60) + "…";
     return text;
@@ -453,25 +497,25 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
 
   const handleOppAction = useCallback((oppId, action) => {
     setOppActions(prev => ({ ...prev, [oppId]: action }));
-    const opp = MOCK_OPPORTUNITIES.find(o => o.id === oppId);
+    const opp = scoutOpps.find(o => o.id === oppId);
     if (action === "interested") {
       addLog(`Jay Scout: expanding on ${opp?.title} at ${opp?.company}`, "scout");
       pushMsg("t-scout", "jay-scout", JSON.stringify({
         type: "scout_detail",
         oppId,
-        detail: `Here's a deeper look at the ${opp?.title} role at ${opp?.company}:\n\n• Role level aligns with your Staff/Principal target — this is a senior IC position leading fraud ML initiatives.\n• Tech stack: PyTorch, distributed training, real-time inference pipelines — overlaps heavily with your Flutterwave work.\n• Team: 8-person ML team, reporting to VP Engineering.\n• Why I flagged it: Your $2B txn/yr fraud detection precision (99.7%) is directly relevant to their core challenge.\n\nWant me to have your agent reach out to their recruiter, or save this for later?`,
+        detail: `Here's what I found about ${opp?.title} at ${opp?.company}:\n\n${opp?.summary || "No additional details available."}\n\n• Location: ${opp?.location || "Unknown"}\n${opp?.compRange ? `• Compensation: ${opp.compRange}\n` : ""}• Source: ${opp?.source || "web"}\n${opp?.sourceUrl ? `• Link: ${opp.sourceUrl}\n` : ""}\nWant me to have your agent reach out, or save this for later?`,
       }));
     } else if (action === "reach_out") {
       addLog(`Jay Scout: initiating outreach for ${opp?.title} at ${opp?.company}`, "scout");
       pushMsg("t-scout", "jay-scout", JSON.stringify({
         type: "scout_detail",
         oppId,
-        detail: `Got it — I'll have your agent draft an introduction to ${opp?.company}'s hiring team, highlighting your fraud detection background and production ML experience. You'll see a new thread when it's ready for review.`,
+        detail: `Got it — I'll have your agent draft an introduction to ${opp?.company}, highlighting your relevant experience. You'll see a new thread when it's ready for review.`,
       }));
     } else if (action === "dismissed") {
       addLog(`Jay Scout: dismissed ${opp?.title} at ${opp?.company}`, "scout");
     }
-  }, [addLog, pushMsg]);
+  }, [addLog, pushMsg, scoutOpps]);
 
   const isScoutThread = activeThread?.a === "jay-scout" || activeThread?.b === "jay-scout";
 
@@ -492,7 +536,7 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "#2d2d4a" }}>
             {myThreads.length} threads &nbsp;·&nbsp; {totalMsgs} msgs &nbsp;·&nbsp; {concluded} concluded &nbsp;·&nbsp;
-            {filteredOpps.length > 0 && <><span style={{ color: "#a78bfa" }}>{filteredOpps.length} opps</span> &nbsp;·&nbsp;</>}
+            {scoutOpps.length > 0 && <><span style={{ color: "#a78bfa" }}>{scoutOpps.length} opps</span> &nbsp;·&nbsp;</>}
             <span style={{ color: connectionsToday >= MAX_CONNECTIONS_DAY ? "#ef4444" : "#3d3d5c" }}>
               {connectionsToday}/{MAX_CONNECTIONS_DAY} today
             </span>
@@ -528,7 +572,7 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
           {/* Jay Scout card — pinned at top */}
           {(() => {
             const scoutThread = threads.find(t => t.b === "jay-scout" || t.a === "jay-scout");
-            const oppCount = filteredOpps.length;
+            const oppCount = scoutOpps.length;
             const scoutLast = scoutThread ? [...scoutThread.messages].reverse().find(m => m.text) : null;
             return (
               <div
@@ -623,7 +667,7 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
                   <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
                     <div style={{ width: 22, height: 22, borderRadius: "50%", background: "linear-gradient(135deg, #a78bfa, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>◎</div>
                     <span style={{ fontSize: 12, fontWeight: 600, flex: 1, color: "#c4b5fd" }}>Jay Scout</span>
-                    <span style={{ fontSize: 9, color: "#a78bfa", fontWeight: 600 }}>{filteredOpps.length}</span>
+                    <span style={{ fontSize: 9, color: "#a78bfa", fontWeight: 600 }}>{scoutOpps.length}</span>
                   </div>
                   <div style={{ fontSize: 11, color: isLive ? "#7c6aab" : "#3a2a5c", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", lineHeight: 1.55 }}>
                     {last ? messagePreview(last.text) : <span style={{ fontStyle: "italic", color: "#1e1e30" }}>Scanning…</span>}
@@ -805,6 +849,40 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
                   const empty   = msg.streaming && !msg.text;
                   const scoutData = msg.speaker === "jay-scout" && !empty ? parseScoutMessage(msg.text) : null;
 
+                  {/* ── Scout loading message ── */}
+                  if (scoutData?.type === "scout_loading") {
+                    return (
+                      <div key={msg.id} style={{ marginBottom: 24 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                          <div style={{
+                            width: 32, height: 32, borderRadius: "50%",
+                            background: "linear-gradient(135deg, #a78bfa, #7c3aed)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 16, flexShrink: 0, boxShadow: "0 0 10px #a78bfa25",
+                            animation: "pulse 2s infinite",
+                          }}>◎</div>
+                          <div style={{ fontSize: 9, color: "#5a4a80" }}>
+                            <span style={{ color: "#a78bfa", fontWeight: 600 }}>Jay Scout</span>
+                          </div>
+                        </div>
+                        <div style={{ background: "#0c0818", border: "1px solid #1e1438", borderRadius: "3px 14px 14px 14px", padding: "16px 20px" }}>
+                          <div style={{ fontSize: 13, color: "#c4b5fd", lineHeight: 1.7 }}>
+                            {scoutData.summary}
+                          </div>
+                          <div style={{ display: "flex", gap: 4, marginTop: 12 }}>
+                            {[0, 1, 2].map(i => (
+                              <div key={i} style={{
+                                width: 6, height: 6, borderRadius: "50%", background: "#a78bfa",
+                                animation: `pulse 1.4s ${i * 0.2}s infinite`,
+                                opacity: 0.5,
+                              }} />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   {/* ── Scout briefing message ── */}
                   if (scoutData?.type === "scout_briefing") {
                     return (
@@ -833,21 +911,19 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
                           {/* Opportunity cards */}
                           {scoutData.opportunities.map(opp => {
                             const action = oppActions[opp.id];
-                            const matchColor = opp.matchScore >= 90 ? "#10b981" : opp.matchScore >= 80 ? "#f59e0b" : "#a78bfa";
                             const typeMeta = OPP_TYPE_META[opp.type] || { icon: "◈", label: opp.type };
                             return (
                               <div key={opp.id} style={{
                                 background: action === "dismissed" ? "#08060f" : "#0a0a1a",
-                                border: `1px solid ${action === "dismissed" ? "#0e0c16" : matchColor + "25"}`,
+                                border: `1px solid ${action === "dismissed" ? "#0e0c16" : "#a78bfa25"}`,
                                 borderRadius: 10, padding: "14px 16px", marginBottom: 12,
                                 opacity: action === "dismissed" ? 0.5 : 1,
                                 transition: "all 0.3s",
                               }}>
-                                {/* Match badge + type */}
+                                {/* Type badge */}
                                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: matchColor }} />
-                                  <span style={{ fontSize: 11, fontWeight: 700, color: matchColor }}>{opp.matchScore}% match</span>
-                                  <span style={{ fontSize: 9, color: "#3d3d5c", marginLeft: "auto" }}>{typeMeta.icon} {typeMeta.label}</span>
+                                  <span style={{ fontSize: 9, color: "#a78bfa" }}>{typeMeta.icon} {typeMeta.label}</span>
+                                  {opp.tags?.length > 0 && <span style={{ fontSize: 9, color: "#3d3d5c", marginLeft: "auto" }}>{opp.tags.slice(0, 3).join(" · ")}</span>}
                                 </div>
                                 {/* Title + Company */}
                                 <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>
@@ -863,7 +939,11 @@ No fluff. No "exploring synergies." State intent plainly — these are AI agents
                                 </div>
                                 {/* Source */}
                                 <div style={{ fontSize: 10, color: "#3d3d5c", marginBottom: 12 }}>
-                                  Source: <span style={{ color: "#6366f1" }}>{opp.source}</span>
+                                  Source: {opp.sourceUrl ? (
+                                    <a href={opp.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#6366f1", textDecoration: "none", borderBottom: "1px solid #6366f140" }}>{opp.source}</a>
+                                  ) : (
+                                    <span style={{ color: "#6366f1" }}>{opp.source}</span>
+                                  )}
                                 </div>
                                 {/* Actions */}
                                 {!action ? (
