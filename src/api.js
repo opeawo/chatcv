@@ -37,3 +37,17 @@ export async function fetchLinkedIn(url) {
   }
   return r.json();
 }
+
+export async function searchPDLPersons(query, size = 10) {
+  const headers = await authHeaders();
+  const r = await fetch("/api/pdl-search", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ query, size }),
+  });
+  if (!r.ok) {
+    const errorBody = await r.text();
+    throw new Error(`PDL Search error (${r.status}): ${errorBody}`);
+  }
+  return r.json();
+}

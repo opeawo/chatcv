@@ -170,6 +170,55 @@ function apiProxyPlugin() {
           res.end(JSON.stringify({ error: err.message }));
         }
       });
+
+      // PDL Person Search proxy
+      server.middlewares.use("/api/pdl-search", async (req, res) => {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: "Method not allowed" }));
+          return;
+        }
+
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        const { query, size = 10 } = JSON.parse(body);
+
+        if (!query) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: "Missing required field: query" }));
+          return;
+        }
+
+        const pdlKey = process.env.PDL_API_KEY;
+        if (!pdlKey) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: "PDL_API_KEY not set in .env.local" }));
+          return;
+        }
+
+        try {
+          const response = await fetch("https://api.peopledatalabs.com/v5/person/search", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Api-Key": pdlKey,
+            },
+            body: JSON.stringify({
+              query: { bool: query },
+              size: Math.min(size, 10),
+              titlecase: true,
+            }),
+          });
+
+          const data = await response.text();
+          res.statusCode = response.status;
+          res.setHeader("Content-Type", "application/json");
+          res.end(data);
+        } catch (err) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
     },
   };
 }
