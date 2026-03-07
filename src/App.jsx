@@ -7,13 +7,13 @@ import MeshPage from "./pages/MeshPage";
 
 function RequireAuth({ children }) {
   const { user } = useAuthContext();
-  if (!user) return <Navigate to="/" replace />;
+  if (!user && !import.meta.env.DEV) return <Navigate to="/" replace />;
   return children;
 }
 
 function RequireOnboarded({ children }) {
   const { userAgent } = useUserAgent();
-  if (!userAgent) return <Navigate to="/onboarding" replace />;
+  if (!userAgent && !import.meta.env.DEV) return <Navigate to="/onboarding" replace />;
   return children;
 }
 

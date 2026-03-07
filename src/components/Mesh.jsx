@@ -3,57 +3,77 @@ import { claude } from "../api";
 import Settings from "./Settings";
 import UserMenu from "./UserMenu";
 import { JAY_SCOUT, searchOpportunities, generateBriefing, OPP_TYPE_META } from "../jayScoutData";
+// profiles-index.json is loaded lazily to avoid bloating the main bundle
 
-const AGENTS = [
-  // ── Default "you" (replaced by onboarded profile) ──
-  {
-    id: "a1", name: "Tunde Adeyemi", avatar: "TA", color: "#6366f1",
-    title: "Sr. ML Engineer", company: "Flutterwave", status: "open_to_work",
-    goals: ["Find Staff ML Engineer roles at fintech companies", "Get interviews at companies hiring for fraud/payments ML"],
-    background: "5 years building production AI/ML systems for African fintech. Built fraud detection at $2B txn/yr, 99.7% precision. Expert in PyTorch, LLMs, MLOps. Open to Staff or Principal Engineer roles.",
-    dealbreakers: ["No relocation", "Min $150k", "Must be ML-focused role"],
-    isYou: true,
-  },
-  // ── HIRING agents (match with open_to_work users) ──
-  {
-    id: "a2", name: "Priya Sharma", avatar: "PS", color: "#ec4899",
-    title: "Product Director", company: "Razorpay", status: "hiring",
-    goals: ["Hire Staff ML Engineer for fraud and risk ML", "Find fintech engineers from high-volume payment systems"],
-    background: "Product Director at Razorpay overseeing payments intelligence. Led 3 products to $10M ARR. Hiring a Staff ML Engineer for fraud and risk ML. Budget $180k–$220k, remote-first.",
-    dealbreakers: ["No junior engineers", "Must have payments domain knowledge"],
-  },
-  {
-    id: "a3", name: "James Okonkwo", avatar: "JO", color: "#10b981",
-    title: "CTO", company: "Paystack", status: "hiring",
-    goals: ["Hire Staff ML Engineer for fraud detection", "Hire senior engineers with African market experience"],
-    background: "CTO at Paystack scaling infrastructure to 100M txn/day. Hiring for ML Engineering focused on fraud detection. Budget $160k–$200k, remote-first. Deep knowledge of African market constraints.",
-    dealbreakers: ["Must have African market experience", "Needs production engineering mindset not just research"],
-  },
-  // ── COLLABORATING agent ──
-  {
-    id: "a4", name: "Mei Lin", avatar: "ML", color: "#f59e0b",
-    title: "AI Researcher", company: "DeepMind", status: "collaborating",
-    goals: ["Co-author paper on LLMs in low-resource African languages", "Find engineers with real production LLM data from emerging markets"],
-    background: "Senior Researcher at DeepMind. Running research initiative on AI in underrepresented markets. Looking for co-authors with production ML deployed in Africa.",
-    dealbreakers: ["Must have real deployment data, not just academic work"],
-  },
-  // ── HIRING agent ──
-  {
-    id: "a5", name: "Carlos Reyes", avatar: "CR", color: "#8b5cf6",
-    title: "Eng. Manager", company: "Nubank", status: "hiring",
-    goals: ["Hire 2 Senior Engineers with distributed systems and ML experience", "Find engineers comfortable with Clojure or willing to learn"],
-    background: "Engineering Manager at Nubank leading 12-person distributed systems team. Hiring 2 Senior Engineers with distributed systems and ML experience. Strong overlap with African fintech challenges.",
-    dealbreakers: ["Must have distributed systems experience at scale", "No junior engineers"],
-  },
-  // ── SCOUTING agent ──
-  {
-    id: "a6", name: "Aisha Bello", avatar: "AB", color: "#06b6d4",
-    title: "Venture Partner", company: "Partech Africa", status: "scouting",
-    goals: ["Find exceptional African tech founders building AI products", "Connect with senior engineers who are starting companies"],
-    background: "Venture Partner at Partech Africa. $280M fund. Looking for senior engineers at the intersection of fintech and AI who are building or about to build a startup.",
-    dealbreakers: ["Must have entrepreneurial intent — not pure job seekers", "Must be building in Africa or for African markets"],
-  },
-];
+// ── Default user placeholder (replaced by onboarded profile) ──
+const DEFAULT_USER = {
+  id: "a1", name: "Tunde Adeyemi", avatar: "TA", color: "#6366f1",
+  title: "Sr. ML Engineer", company: "Flutterwave", status: "open_to_work",
+  goals: ["Find Staff ML Engineer roles at fintech companies"],
+  background: "5 years building production AI/ML systems for African fintech.",
+  dealbreakers: [],
+  isYou: true,
+};
+
+// ── Agent colors (cycled for indexed profiles) ──
+const AGENT_COLORS = ["#ec4899", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4", "#f97316", "#14b8a6", "#e879f9", "#fb923c", "#34d399", "#818cf8", "#fbbf24", "#a78bfa", "#38bdf8", "#f472b6"];
+
+// Convert a profile-index entry to an agent object
+function profileToAgent(p, index) {
+  const initials = p.n.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  return {
+    id: `p${index}`,
+    name: p.n,
+    avatar: initials,
+    color: AGENT_COLORS[index % AGENT_COLORS.length],
+    title: p.l,
+    company: p.c,
+    status: p.st,
+    goals: [],
+    background: `${p.l} at ${p.c}. ${p.su}`,
+    dealbreakers: [],
+    fromIndex: true,
+  };
+}
+
+// Pick agents from the index that are relevant to the user's intent
+function pickAgentsFromIndex(index, userStatus, count = 15) {
+  if (!index || index.length === 0) return [];
+
+  // Shuffle helper
+  const shuffled = [...index].sort(() => Math.random() - 0.5);
+
+  // Pick a mix: prioritize complementary statuses, then add variety
+  const picked = [];
+  const seen = new Set();
+
+  // Status priority based on user intent
+  const priorityStatuses =
+    userStatus === "hiring"        ? ["open_to_work", "collaborating", "scouting"] :
+    userStatus === "open_to_work"  ? ["hiring", "collaborating", "scouting"] :
+    userStatus === "collaborating" ? ["collaborating", "open_to_work", "hiring", "scouting"] :
+    userStatus === "scouting"      ? ["open_to_work", "hiring", "collaborating"] :
+                                     ["hiring", "open_to_work", "collaborating", "scouting"];
+
+  for (const status of priorityStatuses) {
+    const pool = shuffled.filter(p => p.st === status && !seen.has(p.s));
+    const take = status === priorityStatuses[0] ? Math.min(pool.length, Math.ceil(count * 0.5)) : Math.min(pool.length, Math.ceil(count * 0.2));
+    for (let i = 0; i < take && picked.length < count; i++) {
+      seen.add(pool[i].s);
+      picked.push(pool[i]);
+    }
+  }
+
+  // Fill remaining with random profiles
+  if (picked.length < count) {
+    const remaining = shuffled.filter(p => !seen.has(p.s));
+    for (let i = 0; i < remaining.length && picked.length < count; i++) {
+      picked.push(remaining[i]);
+    }
+  }
+
+  return picked.map((p, i) => profileToAgent(p, i));
+}
 
 const STATUS_META = {
   open_to_work:  { label: "Open to work",  color: "#6366f1" },
@@ -71,28 +91,36 @@ function uid()  { return Math.random().toString(36).slice(2, 8); }
 function now()  { return new Date().toLocaleTimeString("en", { hour12: false }); }
 
 export default function Mesh({ userAgent, onUpdateAgent }) {
-  // Build agents list: replace demo a1 with onboarded user if provided
+  // Load profiles index lazily
+  const [meshProfiles, setMeshProfiles] = useState([]);
+  const profilesLoadedRef = useRef(false);
+  useEffect(() => {
+    if (profilesLoadedRef.current) return;
+    profilesLoadedRef.current = true;
+    import("../profiles-index.json").then(mod => {
+      setMeshProfiles(mod.default || mod);
+    }).catch(() => setMeshProfiles([]));
+  }, []);
+
+  // Build agents list from profiles index + user profile
   const agents = useMemo(() => {
-    if (!userAgent) return [...AGENTS.slice(0, 1), JAY_SCOUT, ...AGENTS.slice(1)];
-    const { profile, intent } = userAgent;
-    return [
-      {
-        id: "a1",
-        name: profile.name,
-        avatar: profile.name.split(" ").map(w => w[0]).join("").slice(0, 2),
-        color: "#6366f1",
-        title: profile.title,
-        company: profile.company,
-        status: intent.intent,
-        goals: intent.goals.split(/[.;]/).map(s => s.trim()).filter(Boolean),
-        background: profile.summary,
-        dealbreakers: intent.dealbreakers.split(/[.;]/).map(s => s.trim()).filter(Boolean),
-        isYou: true,
-      },
-      JAY_SCOUT,
-      ...AGENTS.filter(a => !a.isYou),
-    ];
-  }, [userAgent]);
+    const me = userAgent ? {
+      id: "a1",
+      name: userAgent.profile.name,
+      avatar: userAgent.profile.name.split(" ").map(w => w[0]).join("").slice(0, 2),
+      color: "#6366f1",
+      title: userAgent.profile.title,
+      company: userAgent.profile.company,
+      status: userAgent.intent.intent,
+      goals: userAgent.intent.goals.split(/[.;]/).map(s => s.trim()).filter(Boolean),
+      background: userAgent.profile.summary,
+      dealbreakers: userAgent.intent.dealbreakers.split(/[.;]/).map(s => s.trim()).filter(Boolean),
+      isYou: true,
+    } : DEFAULT_USER;
+
+    const meshAgents = pickAgentsFromIndex(meshProfiles, me.status, 15);
+    return [me, JAY_SCOUT, ...meshAgents];
+  }, [userAgent, meshProfiles]);
 
   const byId = useCallback((id) => agents.find(a => a.id === id), [agents]);
 
